@@ -1,0 +1,198 @@
+rules_version = '2';
+// Version 1.0.1
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: stocks
+    // Document ID: auto-generated
+    // Fields:
+    //   - name: string (required, 1-100 chars)
+    //   - gsm: number (optional, positive)
+    //   - size: string (optional, 1-50 chars)
+    //   - quantity: number (required, non-negative)
+    //   - type: string (required, enum: ['paper', 'board', 'ink', 'plate'])
+    //   - lastUpdated: number (required, timestamp)
+    //
+    // Collection: jobs
+    // Document ID: auto-generated
+    // Fields:
+    //   - clientName: string (required, 1-100 chars)
+    //   - jobDescription: string (required, 1-1000 chars)
+    //   - date: number (required, timestamp)
+    //   - items: list (required, max 50 items)
+    //     - stockId: string
+    //     - quantityUsed: number (positive)
+    //
+    // Collection: inkUsage
+    // Document ID: auto-generated
+    // Fields:
+    //   - inkId: string
+    //   - date: number (timestamp)
+    //   - weight: number
+    //   - count: number
+    //   - notes: string (optional)
+    //
+    // Collection: stockHistory
+    // Document ID: auto-generated
+    // Fields:
+    //   - stockId: string
+    //   - date: number (timestamp)
+    //   - type: string (enum: ['addition', 'usage'])
+    //   - quantity: number
+    //   - previousQuantity: number
+    //   - newQuantity: number
+    //   - notes: string (optional)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        ((exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+         (request.auth.token.email == "subhanshuraj9@gmail.com" && request.auth.token.email_verified == true) ||
+         (request.auth.token.email == "admin@printstock.local"));
+    }
+
+    function hasRequiredFields(data, fields) {
+      return data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(data, fields) {
+      return data.keys().hasOnly(fields);
+    }
+
+    function isValidStock(data) {
+      return hasRequiredFields(data, ['name', 'quantity', 'type', 'lastUpdated']) &&
+             hasOnlyAllowedFields(data, ['name', 'gsm', 'size', 'quantity', 'type', 'lastUpdated', 'inkContainers', 'defaultRate', 'paperType']) &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             (!('gsm' in data) || (data.gsm is number && data.gsm > 0)) &&
+             (!('size' in data) || (data.size is string && data.size.size() >= 1 && data.size.size() <= 50)) &&
+             data.quantity is number && data.quantity >= 0 &&
+             data.type in ['paper', 'board', 'ink', 'plate'] &&
+             (!('inkContainers' in data) || (data.inkContainers is list)) &&
+             data.lastUpdated is number &&
+             (!('defaultRate' in data) || (data.defaultRate is number && data.defaultRate >= 0)) &&
+             (!('paperType' in data) || (data.paperType is string && data.paperType.size() >= 1 && data.paperType.size() <= 100));
+    }
+
+    function isValidJob(data) {
+      return hasRequiredFields(data, ['clientName', 'jobDescription', 'date', 'items']) &&
+             hasOnlyAllowedFields(data, ['clientName', 'jobDescription', 'date', 'items', 'platesUsed', 'processCharges', 'orderedQuantity', 'dispatches', 'dispatchStatus', 'isJoint', 'jointRef']) &&
+             data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 100 &&
+             data.jobDescription is string && data.jobDescription.size() >= 1 && data.jobDescription.size() <= 1000 &&
+             data.date is number &&
+             data.items is list && data.items.size() <= 50 &&
+             (!('platesUsed' in data) || (data.platesUsed is list)) &&
+             (!('processCharges' in data) || (data.processCharges is list)) &&
+             (!('orderedQuantity' in data) || (data.orderedQuantity is number && data.orderedQuantity >= 0)) &&
+             (!('dispatches' in data) || (data.dispatches is list)) &&
+             (!('dispatchStatus' in data) || (data.dispatchStatus in ['pending', 'partial', 'completed'])) &&
+             (!('isJoint' in data) || (data.isJoint is bool)) &&
+             (!('jointRef' in data) || (data.jointRef is string));
+    }
+
+    function isValidPayment(data) {
+      return hasRequiredFields(data, ['clientName', 'amount', 'date']) &&
+             hasOnlyAllowedFields(data, ['clientName', 'amount', 'date', 'notes']) &&
+             data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 100 &&
+             data.amount is number && data.amount > 0 &&
+             data.date is number &&
+             (!('notes' in data) || (data.notes is string));
+    }
+
+    function isValidInkUsage(data) {
+      return hasRequiredFields(data, ['inkId', 'date', 'weight', 'count']) &&
+             hasOnlyAllowedFields(data, ['inkId', 'date', 'weight', 'count', 'notes']) &&
+             data.inkId is string &&
+             data.date is number &&
+             data.weight is number && data.weight > 0 &&
+             data.count is number && data.count > 0 &&
+             (!('notes' in data) || (data.notes is string));
+    }
+
+    function isValidStockHistory(data) {
+      return hasRequiredFields(data, ['stockId', 'date', 'type', 'quantity', 'previousQuantity', 'newQuantity']) &&
+             hasOnlyAllowedFields(data, ['stockId', 'date', 'type', 'quantity', 'previousQuantity', 'newQuantity', 'notes', 'purchaseRate', 'supplier', 'invoiceNo']) &&
+             data.stockId is string &&
+             data.date is number &&
+             data.type in ['addition', 'usage'] &&
+             data.quantity is number &&
+             data.previousQuantity is number &&
+             data.newQuantity is number &&
+             (!('notes' in data) || (data.notes is string)) &&
+             (!('purchaseRate' in data) || (data.purchaseRate is number && data.purchaseRate >= 0)) &&
+             (!('supplier' in data) || (data.supplier is string)) &&
+             (!('invoiceNo' in data) || (data.invoiceNo is string));
+    }
+
+    function isValidPaperSection(data) {
+      return hasRequiredFields(data, ['name', 'createdAt']) &&
+             hasOnlyAllowedFields(data, ['name', 'createdAt']) &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             data.createdAt is number;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /stocks/{stockId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidStock(request.resource.data);
+      allow update: if isAuthenticated() && isValidStock(request.resource.data);
+      allow delete: if isAuthenticated(); // Changed from isAdmin() to fix delete issue
+    }
+
+    match /jobs/{jobId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidJob(request.resource.data);
+      allow update: if isAuthenticated() && isValidJob(request.resource.data);
+      allow delete: if isAuthenticated(); // Changed from isAdmin() to fix delete issue
+    }
+
+    match /inkUsage/{usageId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidInkUsage(request.resource.data);
+      allow delete: if isAuthenticated();
+    }
+
+    match /stockHistory/{historyId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidStockHistory(request.resource.data);
+      allow delete: if isAuthenticated();
+    }
+
+    match /payments/{paymentId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidPayment(request.resource.data);
+      allow update: if isAuthenticated() && isValidPayment(request.resource.data);
+      allow delete: if isAuthenticated();
+    }
+
+    match /paperSections/{sectionId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidPaperSection(request.resource.data);
+      allow update: if isAuthenticated() && isValidPaperSection(request.resource.data);
+      allow delete: if isAuthenticated();
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    match /test/{testId} {
+      allow read: if true;
+    }
+  }
+}

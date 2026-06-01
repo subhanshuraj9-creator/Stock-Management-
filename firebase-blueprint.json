@@ -1,0 +1,150 @@
+{
+  "entities": {
+    "StockItem": {
+      "title": "Stock Item",
+      "description": "Represents a paper, board, ink, or plate stock in the printing press.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the stock item" },
+        "gsm": { "type": "number", "description": "Grams per square meter (if paper/board)" },
+        "size": { "type": "string", "description": "Dimensions or specifications of the stock item" },
+        "quantity": { "type": "number", "description": "Total units available in stock" },
+        "type": { "type": "string", "enum": ["paper", "board", "ink", "plate"], "description": "Category of the stock" },
+        "paperType": { "type": "string", "description": "Sub-category / Specific brand or section of paper" },
+        "lastUpdated": { "type": "number", "description": "Timestamp of last update" },
+        "defaultRate": { "type": "number", "description": "Suggested charge per unit/sheet for billing" }
+      },
+      "required": ["name", "quantity", "type", "lastUpdated"]
+    },
+    "Job": {
+      "title": "Printing Job",
+      "description": "Represents a printing job for a client, tracking papers, rates, plates and combination references.",
+      "type": "object",
+      "properties": {
+        "clientName": { "type": "string", "description": "Name of the client" },
+        "jobDescription": { "type": "string", "description": "Details of the job" },
+        "date": { "type": "number", "description": "Timestamp of when the job was created" },
+        "items": {
+          "type": "array",
+          "description": "List of paper stocks used in this job",
+          "items": {
+            "type": "object",
+            "properties": {
+              "stockId": { "type": "string" },
+              "quantityUsed": { "type": "number", "description": "Actual Sheets Consumed" },
+              "rate": { "type": "number" },
+              "ups": { "type": "number", "description": "Matter Per Sheet (Ups)" },
+              "autoCalculate": { "type": "boolean", "description": "Whether sheets required is auto-calculated" },
+              "calculatedSheets": { "type": "number", "description": "Calculated Sheets Required" },
+              "isJoint": { "type": "boolean", "description": "If true: joint paper, no stock deduction! Shared across parties/jobs" },
+              "paperRef": { "type": "string", "description": "Reference of joint paper to link jobs" }
+            },
+            "required": ["stockId", "quantityUsed"]
+          }
+        },
+        "platesUsed": {
+          "type": "array",
+          "description": "Plates assigned to this job, with shared/joint combinations tracking",
+          "items": {
+            "type": "object",
+            "properties": {
+              "plateId": { "type": "string" },
+              "count": { "type": "number" },
+              "isJoint": { "type": "boolean" },
+              "plateRef": { "type": "string" },
+              "rate": { "type": "number" }
+            },
+            "required": ["plateId", "count"]
+          }
+        },
+        "processCharges": {
+          "type": "array",
+          "description": "Process-wise custom charges (e.g. cutting, folding, binding, UV, lamination, etc.)",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "amount": { "type": "number" },
+              "notes": { "type": "string" }
+            },
+            "required": ["id", "name", "amount"]
+          }
+        },
+        "orderedQuantity": {
+          "type": "number",
+          "description": "Total bulk ordered quantity of physical finished items"
+        },
+        "dispatches": {
+          "type": "array",
+          "description": "Shipment/collection records of products to client, to track bulk/partial completions",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "date": { "type": "number" },
+              "quantityShipped": { "type": "number" },
+              "receiverName": { "type": "string" },
+              "notes": { "type": "string" }
+            },
+            "required": ["id", "date", "quantityShipped"]
+          }
+        },
+        "dispatchStatus": {
+          "type": "string",
+          "enum": ["pending", "partial", "completed"],
+          "description": "Overall dispatch delivery tracking status"
+        },
+        "isJoint": {
+          "type": "boolean",
+          "description": "Whether this job shares/combines printing materials"
+        },
+        "jointRef": {
+          "type": "string",
+          "description": "Sharing/combination reference string"
+        }
+      },
+      "required": ["clientName", "jobDescription", "date", "items"]
+    },
+    "Payment": {
+      "title": "Client Payment",
+      "description": "Represents a payment received from a client/party for balancing ledgers.",
+      "type": "object",
+      "properties": {
+        "clientName": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "number" },
+        "notes": { "type": "string" }
+      },
+      "required": ["clientName", "amount", "date"]
+    },
+    "PaperSection": {
+      "title": "Paper Section",
+      "description": "Represents a category division of paper stocks.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the paper section" },
+        "createdAt": { "type": "number", "description": "Timestamp of creation" }
+      },
+      "required": ["name", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/stocks/{stockId}": {
+      "schema": "StockItem",
+      "description": "Collection of stock materials (paper, board, ink, and plates)"
+    },
+    "/jobs/{jobId}": {
+      "schema": "Job",
+      "description": "Collection of jobs containing clients, items, and sheet/plate usages and billing rates"
+    },
+    "/payments/{paymentId}": {
+      "schema": "Payment",
+      "description": "Collection of payments received from client parties"
+    },
+    "/paperSections/{sectionId}": {
+      "schema": "PaperSection",
+      "description": "Collection of custom paper sub-categories / sections"
+    }
+  }
+}

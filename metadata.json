@@ -1,0 +1,5 @@
+{
+  "name": "PrintStock Pro",
+  "description": "Professional stock and job management system for printing presses. Track paper inventory, manage client jobs, and automate stock deductions.",
+  "requestFramePermissions": []
+}
