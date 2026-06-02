@@ -160,12 +160,22 @@ export function JobManagement() {
     }
   };
 
+  const getInitialLamination = () => ({
+    halfEnabled: false,
+    halfQty: 0,
+    halfRate: 0,
+    fullEnabled: false,
+    fullQty: 0,
+    fullRate: 0
+  });
+
   const [formData, setFormData] = useState({
     clientName: '',
     jobDescription: '',
     selectedItems: [] as JobItem[],
-    platesUsed: [] as { plateId: string; count: number; isJoint?: boolean; plateRef?: string; rate?: number; }[],
+    platesUsed: [] as { plateId: string; count: number; isJoint?: boolean; plateRef?: string; rate?: number; isReused?: boolean; isCancelled?: boolean; }[],
     processCharges: getInitialProcessCharges(),
+    lamination: getInitialLamination(),
     ignoreStockLimits: false,
     orderedQuantity: '' as string | number,
     isJoint: false,
@@ -439,7 +449,7 @@ export function JobManagement() {
     setFormData({ ...formData, platesUsed: newPlates });
   };
 
-  const handlePlateChange = (index: number, field: 'plateId' | 'count' | 'isJoint' | 'plateRef' | 'rate', value: any) => {
+  const handlePlateChange = (index: number, field: 'plateId' | 'count' | 'isJoint' | 'plateRef' | 'rate' | 'isReused' | 'isCancelled', value: any) => {
     const newPlates = [...formData.platesUsed];
     let rateUpdate = {};
     if (field === 'plateId' && value) {
@@ -524,7 +534,7 @@ export function JobManagement() {
         // 1. Check if all stocks have enough quantity (exclude joint plates and joint papers from stock check)
         const allItems = [
           ...formData.selectedItems.filter(i => !i.isJoint).map(i => ({ id: i.stockId, used: i.quantityUsed })),
-          ...formData.platesUsed.filter(p => !p.isJoint).map(p => ({ id: p.plateId, used: p.count }))
+          ...formData.platesUsed.filter(p => !p.isJoint && !p.isReused).map(p => ({ id: p.plateId, used: p.count }))
         ].filter(i => i.id);
 
         const stockRefs = allItems.map(item => doc(db, 'stocks', item.id));
@@ -571,6 +581,7 @@ export function JobManagement() {
           items: formData.selectedItems,
           platesUsed: formData.platesUsed,
           processCharges: formData.processCharges.filter(pc => pc.amount > 0 || (pc.notes && pc.notes.trim() !== '')),
+          lamination: formData.lamination,
           orderedQuantity: formData.orderedQuantity ? Number(formData.orderedQuantity) : 0,
           dispatches: [],
           dispatchStatus: 'pending' as const,
@@ -583,7 +594,7 @@ export function JobManagement() {
       });
 
       setIsAddOpen(false);
-      setFormData({ clientName: '', jobDescription: '', selectedItems: [], platesUsed: [], processCharges: getInitialProcessCharges(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '' } as any);
+      setFormData({ clientName: '', jobDescription: '', selectedItems: [], platesUsed: [], processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '' } as any);
       toast.success('Job created and stock updated successfully');
     } catch (error: any) {
       toast.error(error.message || 'Failed to create job');
@@ -599,7 +610,7 @@ export function JobManagement() {
         // 1. Return stock (only return plates and paper that were actually deducted - excluding joint plates and joint papers!)
         const allItems = [
           ...jobToDelete.items.filter(i => !i.isJoint).map(i => ({ id: i.stockId, used: i.quantityUsed })),
-          ...(jobToDelete.platesUsed || []).filter(p => !p.isJoint).map(p => ({ id: p.plateId, used: p.count }))
+          ...(jobToDelete.platesUsed || []).filter(p => !p.isJoint && !p.isReused).map(p => ({ id: p.plateId, used: p.count }))
         ].filter(item => item.id);
 
         // Fetch all stock snapshots in parallel before any writes
@@ -918,11 +929,11 @@ export function JobManagement() {
       await runTransaction(db, async (transaction) => {
         const oldItems = [
           ...editingJob.items.filter(i => !i.isJoint).map(i => ({ id: i.stockId, used: i.quantityUsed })),
-          ...(editingJob.platesUsed || []).filter(p => !p.isJoint).map(p => ({ id: p.plateId, used: p.count }))
+          ...(editingJob.platesUsed || []).filter(p => !p.isJoint && !p.isReused).map(p => ({ id: p.plateId, used: p.count }))
         ];
         const newItems = [
           ...formData.selectedItems.filter(i => !i.isJoint).map(i => ({ id: i.stockId, used: i.quantityUsed })),
-          ...formData.platesUsed.filter(p => !p.isJoint).map(p => ({ id: p.plateId, used: p.count }))
+          ...formData.platesUsed.filter(p => !p.isJoint && !p.isReused).map(p => ({ id: p.plateId, used: p.count }))
         ];
 
         const allStockIds = Array.from(new Set([
@@ -987,6 +998,7 @@ export function JobManagement() {
           items: formData.selectedItems,
           platesUsed: formData.platesUsed,
           processCharges: formData.processCharges.filter(pc => pc.amount > 0 || (pc.notes && pc.notes.trim() !== '')),
+          lamination: formData.lamination,
           orderedQuantity: orderedQty,
           dispatchStatus: status,
           isJoint: !!(formData as any).isJoint,
@@ -997,7 +1009,7 @@ export function JobManagement() {
       });
 
       setEditingJob(null);
-      setFormData({ clientName: '', jobDescription: '', selectedItems: [], platesUsed: [], processCharges: getInitialProcessCharges(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '' } as any);
+      setFormData({ clientName: '', jobDescription: '', selectedItems: [], platesUsed: [], processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '' } as any);
       toast.success('Job updated successfully');
     } catch (error: any) {
       toast.error(error.message || 'Failed to update job');
@@ -1036,6 +1048,7 @@ export function JobManagement() {
               selectedItems: [],
               platesUsed: [],
               processCharges: getInitialProcessCharges(),
+              lamination: getInitialLamination(),
               ignoreStockLimits: false,
               orderedQuantity: '',
               isJoint: false,
@@ -1498,6 +1511,35 @@ export function JobManagement() {
                         <span className="text-[10px] text-amber-600 font-mono text-center block w-full select-none cursor-not-allowed">Joint</span>
                       )}
                     </div>
+
+                    {/* Reuse and Cancelled checkboxes in Add Form */}
+                    <div className="col-span-12 flex flex-wrap gap-4 pt-2 border-t border-gray-100/60 mt-1">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id={`plate-reused-${index}`}
+                          checked={!!plate.isReused}
+                          onChange={e => handlePlateChange(index, 'isReused', e.target.checked)}
+                          className="h-4 w-4 rounded border-gray-300 text-[#5A5A40] focus:ring-0 cursor-pointer"
+                        />
+                        <Label htmlFor={`plate-reused-${index}`} className="text-xs text-gray-600 font-semibold select-none cursor-pointer">
+                          Repeat Job (Same Plate/No Stock Deduction)
+                        </Label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id={`plate-cancelled-${index}`}
+                          checked={!!plate.isCancelled}
+                          onChange={e => handlePlateChange(index, 'isCancelled', e.target.checked)}
+                          className="h-4 w-4 rounded border-gray-300 text-red-550 focus:ring-0 cursor-pointer"
+                        />
+                        <Label htmlFor={`plate-cancelled-${index}`} className="text-xs text-red-600 font-semibold select-none cursor-pointer">
+                          Cancelled Plate (Worn Out/Not in Invoice/Ledger)
+                        </Label>
+                      </div>
+                    </div>
+
                     {!!plate.isJoint && plate.plateRef && (
                       <div className="col-span-12 flex items-center gap-2 px-3 py-1 bg-amber-50/60 border border-amber-100/40 text-[10px] text-amber-800 rounded">
                         <span className="font-semibold font-mono bg-amber-200/40 px-1 rounded">Joint Reference: #{plate.plateRef}</span>
@@ -1523,6 +1565,150 @@ export function JobManagement() {
                     })()}
                   </div>
                 ))}
+              </div>
+
+              {/* Lamination Options Section inside Add Modal */}
+              <div className="space-y-4 pt-4 border-t border-gray-100">
+                <div className="flex justify-between items-center">
+                  <Label className="text-lg font-serif">Lamination Details</Label>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Half Lamination Card */}
+                  <div className={`p-4 rounded-2xl border transition-all ${formData.lamination?.halfEnabled ? 'bg-amber-50/30 border-amber-200/60' : 'bg-gray-50 border-gray-150'}`}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <input
+                        type="checkbox"
+                        id="add-lamination-halfEnabled"
+                        checked={!!formData.lamination?.halfEnabled}
+                        onChange={e => setFormData({
+                          ...formData,
+                          lamination: {
+                            ...(formData.lamination || getInitialLamination()),
+                            halfEnabled: e.target.checked,
+                            halfQty: e.target.checked ? (formData.lamination?.halfQty || Number(formData.orderedQuantity) || 0) : 0
+                          }
+                        })}
+                        className="h-4 w-4 rounded border-gray-300 text-[#5A5A40] focus:ring-0 cursor-pointer"
+                      />
+                      <Label htmlFor="add-lamination-halfEnabled" className="text-sm font-semibold text-gray-800 cursor-pointer select-none">
+                        Half Lamination
+                      </Label>
+                    </div>
+
+                    {formData.lamination?.halfEnabled && (
+                      <div className="grid grid-cols-2 gap-3 pt-1 animate-fade-in">
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold text-gray-500 uppercase">Quantity</Label>
+                          <Input
+                            type="number"
+                            value={formData.lamination.halfQty || ''}
+                            placeholder="e.g. 1000"
+                            onChange={e => setFormData({
+                              ...formData,
+                              lamination: {
+                                ...(formData.lamination || getInitialLamination()),
+                                halfQty: e.target.value === '' ? 0 : Number(e.target.value)
+                              }
+                            })}
+                            className="bg-white h-8 text-xs font-semibold"
+                            required
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold text-gray-500 uppercase">Rate (₹)</Label>
+                          <Input
+                            type="number"
+                            step="any"
+                            value={formData.lamination.halfRate || ''}
+                            placeholder="e.g. 0.50"
+                            onChange={e => setFormData({
+                              ...formData,
+                              lamination: {
+                                ...(formData.lamination || getInitialLamination()),
+                                halfRate: e.target.value === '' ? 0 : Number(e.target.value)
+                              }
+                            })}
+                            className="bg-white h-8 text-xs font-semibold"
+                            required
+                          />
+                        </div>
+                        {formData.lamination.halfQty && formData.lamination.halfRate && (
+                          <div className="col-span-2 text-right text-[10px] text-amber-800 font-mono font-medium">
+                            Cost: ₹{(formData.lamination.halfQty * formData.lamination.halfRate).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Full Lamination Card */}
+                  <div className={`p-4 rounded-2xl border transition-all ${formData.lamination?.fullEnabled ? 'bg-amber-50/30 border-amber-200/60' : 'bg-gray-50 border-gray-150'}`}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <input
+                        type="checkbox"
+                        id="add-lamination-fullEnabled"
+                        checked={!!formData.lamination?.fullEnabled}
+                        onChange={e => setFormData({
+                          ...formData,
+                          lamination: {
+                            ...(formData.lamination || getInitialLamination()),
+                            fullEnabled: e.target.checked,
+                            fullQty: e.target.checked ? (formData.lamination?.fullQty || Number(formData.orderedQuantity) || 0) : 0
+                          }
+                        })}
+                        className="h-4 w-4 rounded border-gray-300 text-[#5A5A40] focus:ring-0 cursor-pointer"
+                      />
+                      <Label htmlFor="add-lamination-fullEnabled" className="text-sm font-semibold text-gray-800 cursor-pointer select-none">
+                        Full Lamination
+                      </Label>
+                    </div>
+
+                    {formData.lamination?.fullEnabled && (
+                      <div className="grid grid-cols-2 gap-3 pt-1 animate-fade-in">
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold text-gray-500 uppercase">Quantity</Label>
+                          <Input
+                            type="number"
+                            value={formData.lamination.fullQty || ''}
+                            placeholder="e.g. 1000"
+                            onChange={e => setFormData({
+                              ...formData,
+                              lamination: {
+                                ...(formData.lamination || getInitialLamination()),
+                                fullQty: e.target.value === '' ? 0 : Number(e.target.value)
+                              }
+                            })}
+                            className="bg-white h-8 text-xs font-semibold"
+                            required
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold text-gray-500 uppercase">Rate (₹)</Label>
+                          <Input
+                            type="number"
+                            step="any"
+                            value={formData.lamination.fullRate || ''}
+                            placeholder="e.g. 1.00"
+                            onChange={e => setFormData({
+                              ...formData,
+                              lamination: {
+                                ...(formData.lamination || getInitialLamination()),
+                                fullRate: e.target.value === '' ? 0 : Number(e.target.value)
+                              }
+                            })}
+                            className="bg-white h-8 text-xs font-semibold"
+                            required
+                          />
+                        </div>
+                        {formData.lamination.fullQty && formData.lamination.fullRate && (
+                          <div className="col-span-2 text-right text-[10px] text-amber-800 font-mono font-medium">
+                            Cost: ₹{(formData.lamination.fullQty * formData.lamination.fullRate).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* Process-wise Charges section */}
@@ -1608,7 +1794,9 @@ export function JobManagement() {
 
                 let plateTotal = 0;
                 formData.platesUsed.forEach(plate => {
-                  plateTotal += (plate.count || 0) * (plate.rate || 0);
+                  if (!plate.isCancelled) {
+                    plateTotal += (plate.count || 0) * (plate.rate || 0);
+                  }
                 });
 
                 let processTotal = 0;
@@ -1616,7 +1804,15 @@ export function JobManagement() {
                   processTotal += (pc.amount || 0);
                 });
 
-                const grandTotal = paperTotal + plateTotal + processTotal;
+                let laminationTotal = 0;
+                if (formData.lamination?.halfEnabled) {
+                  laminationTotal += (formData.lamination.halfQty || 0) * (formData.lamination.halfRate || 0);
+                }
+                if (formData.lamination?.fullEnabled) {
+                  laminationTotal += (formData.lamination.fullQty || 0) * (formData.lamination.fullRate || 0);
+                }
+
+                const grandTotal = paperTotal + plateTotal + processTotal + laminationTotal;
 
                 if (grandTotal > 0) {
                   return (
@@ -1629,6 +1825,12 @@ export function JobManagement() {
                         <span className="text-right font-semibold">₹{plateTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         <span>Process charges:</span>
                         <span className="text-right font-semibold">₹{processTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        {(formData.lamination?.halfEnabled || formData.lamination?.fullEnabled) && (
+                          <>
+                            <span>Lamination charges:</span>
+                            <span className="text-right font-semibold">₹{laminationTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </>
+                        )}
                         <div className="col-span-2 border-t border-slate-200 pt-1.5 flex justify-between items-center text-sm font-bold text-slate-900 font-serif">
                           <span>Total Estimated Cost:</span>
                           <span className="text-right font-mono text-[#A8201A]">₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
@@ -1862,6 +2064,7 @@ export function JobManagement() {
                             selectedItems: resolvedItems,
                             platesUsed: resolvedPlates,
                             processCharges: loadProcessChargesForEditing(job),
+                            lamination: job.lamination || getInitialLamination(),
                             ignoreStockLimits: false,
                             orderedQuantity: job.orderedQuantity || '',
                             isJoint: !!job.isJoint || job.items.some(i => i.isJoint) || (job.platesUsed || []).some(p => p.isJoint),
@@ -2340,7 +2543,7 @@ export function JobManagement() {
       {editingJob && (
         <Dialog open={!!editingJob} onOpenChange={() => {
           setEditingJob(null);
-          setFormData({ clientName: '', jobDescription: '', selectedItems: [], platesUsed: [], processCharges: getInitialProcessCharges(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '' } as any);
+          setFormData({ clientName: '', jobDescription: '', selectedItems: [], platesUsed: [], processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '' } as any);
         }}>
           <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -2794,6 +2997,35 @@ export function JobManagement() {
                         <span className="text-[10px] text-amber-600 font-mono text-center block w-full select-none cursor-not-allowed">Joint</span>
                       )}
                     </div>
+
+                    {/* Reuse and Cancelled checkboxes in Edit Form */}
+                    <div className="col-span-12 flex flex-wrap gap-4 pt-2 border-t border-gray-100/60 mt-1">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id={`edit-plate-reused-${index}`}
+                          checked={!!plate.isReused}
+                          onChange={e => handlePlateChange(index, 'isReused', e.target.checked)}
+                          className="h-4 w-4 rounded border-gray-300 text-[#5A5A40] focus:ring-0 cursor-pointer"
+                        />
+                        <Label htmlFor={`edit-plate-reused-${index}`} className="text-xs text-gray-600 font-semibold select-none cursor-pointer">
+                          Repeat Job (Same Plate/No Stock Deduction)
+                        </Label>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id={`edit-plate-cancelled-${index}`}
+                          checked={!!plate.isCancelled}
+                          onChange={e => handlePlateChange(index, 'isCancelled', e.target.checked)}
+                          className="h-4 w-4 rounded border-gray-300 text-red-550 focus:ring-0 cursor-pointer"
+                        />
+                        <Label htmlFor={`edit-plate-cancelled-${index}`} className="text-xs text-red-600 font-semibold select-none cursor-pointer">
+                          Cancelled Plate (Worn Out/Not in Invoice/Ledger)
+                        </Label>
+                      </div>
+                    </div>
+
                     {!!plate.isJoint && plate.plateRef && (
                       <div className="col-span-12 flex items-center gap-2 px-3 py-1 bg-amber-50/60 border border-amber-100/40 text-[10px] text-amber-800 rounded">
                         <span className="font-semibold font-mono bg-amber-200/40 px-1 rounded">Joint Reference: #{plate.plateRef}</span>
@@ -2819,6 +3051,150 @@ export function JobManagement() {
                     })()}
                   </div>
                 ))}
+              </div>
+
+              {/* Lamination Options Section inside Edit Modal */}
+              <div className="space-y-4 pt-4 border-t border-gray-100">
+                <div className="flex justify-between items-center">
+                  <Label className="text-lg font-serif">Lamination Details</Label>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Half Lamination Card */}
+                  <div className={`p-4 rounded-2xl border transition-all ${formData.lamination?.halfEnabled ? 'bg-amber-50/30 border-amber-200/60' : 'bg-gray-50 border-gray-150'}`}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <input
+                        type="checkbox"
+                        id="edit-lamination-halfEnabled"
+                        checked={!!formData.lamination?.halfEnabled}
+                        onChange={e => setFormData({
+                          ...formData,
+                          lamination: {
+                            ...(formData.lamination || getInitialLamination()),
+                            halfEnabled: e.target.checked,
+                            halfQty: e.target.checked ? (formData.lamination?.halfQty || Number(formData.orderedQuantity) || 0) : 0
+                          }
+                        })}
+                        className="h-4 w-4 rounded border-gray-300 text-[#5A5A40] focus:ring-0 cursor-pointer"
+                      />
+                      <Label htmlFor="edit-lamination-halfEnabled" className="text-sm font-semibold text-gray-800 cursor-pointer select-none">
+                        Half Lamination
+                      </Label>
+                    </div>
+
+                    {formData.lamination?.halfEnabled && (
+                      <div className="grid grid-cols-2 gap-3 pt-1 animate-fade-in">
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold text-gray-500 uppercase">Quantity</Label>
+                          <Input
+                            type="number"
+                            value={formData.lamination.halfQty || ''}
+                            placeholder="e.g. 1000"
+                            onChange={e => setFormData({
+                              ...formData,
+                              lamination: {
+                                ...(formData.lamination || getInitialLamination()),
+                                halfQty: e.target.value === '' ? 0 : Number(e.target.value)
+                              }
+                            })}
+                            className="bg-white h-8 text-xs font-semibold"
+                            required
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold text-gray-500 uppercase">Rate (₹)</Label>
+                          <Input
+                            type="number"
+                            step="any"
+                            value={formData.lamination.halfRate || ''}
+                            placeholder="e.g. 0.50"
+                            onChange={e => setFormData({
+                              ...formData,
+                              lamination: {
+                                ...(formData.lamination || getInitialLamination()),
+                                halfRate: e.target.value === '' ? 0 : Number(e.target.value)
+                              }
+                            })}
+                            className="bg-white h-8 text-xs font-semibold"
+                            required
+                          />
+                        </div>
+                        {formData.lamination.halfQty && formData.lamination.halfRate && (
+                          <div className="col-span-2 text-right text-[10px] text-amber-800 font-mono font-medium">
+                            Cost: ₹{(formData.lamination.halfQty * formData.lamination.halfRate).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Full Lamination Card */}
+                  <div className={`p-4 rounded-2xl border transition-all ${formData.lamination?.fullEnabled ? 'bg-amber-50/30 border-amber-200/60' : 'bg-gray-50 border-gray-150'}`}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <input
+                        type="checkbox"
+                        id="edit-lamination-fullEnabled"
+                        checked={!!formData.lamination?.fullEnabled}
+                        onChange={e => setFormData({
+                          ...formData,
+                          lamination: {
+                            ...(formData.lamination || getInitialLamination()),
+                            fullEnabled: e.target.checked,
+                            fullQty: e.target.checked ? (formData.lamination?.fullQty || Number(formData.orderedQuantity) || 0) : 0
+                          }
+                        })}
+                        className="h-4 w-4 rounded border-gray-300 text-[#5A5A40] focus:ring-0 cursor-pointer"
+                      />
+                      <Label htmlFor="edit-lamination-fullEnabled" className="text-sm font-semibold text-gray-800 cursor-pointer select-none">
+                        Full Lamination
+                      </Label>
+                    </div>
+
+                    {formData.lamination?.fullEnabled && (
+                      <div className="grid grid-cols-2 gap-3 pt-1 animate-fade-in">
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold text-gray-500 uppercase">Quantity</Label>
+                          <Input
+                            type="number"
+                            value={formData.lamination.fullQty || ''}
+                            placeholder="e.g. 1000"
+                            onChange={e => setFormData({
+                              ...formData,
+                              lamination: {
+                                ...(formData.lamination || getInitialLamination()),
+                                fullQty: e.target.value === '' ? 0 : Number(e.target.value)
+                              }
+                            })}
+                            className="bg-white h-8 text-xs font-semibold"
+                            required
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold text-gray-500 uppercase">Rate (₹)</Label>
+                          <Input
+                            type="number"
+                            step="any"
+                            value={formData.lamination.fullRate || ''}
+                            placeholder="e.g. 1.00"
+                            onChange={e => setFormData({
+                              ...formData,
+                              lamination: {
+                                ...(formData.lamination || getInitialLamination()),
+                                fullRate: e.target.value === '' ? 0 : Number(e.target.value)
+                              }
+                            })}
+                            className="bg-white h-8 text-xs font-semibold"
+                            required
+                          />
+                        </div>
+                        {formData.lamination.fullQty && formData.lamination.fullRate && (
+                          <div className="col-span-2 text-right text-[10px] text-amber-800 font-mono font-medium">
+                            Cost: ₹{(formData.lamination.fullQty * formData.lamination.fullRate).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* Process-wise Charges section */}
@@ -2904,7 +3280,9 @@ export function JobManagement() {
 
                 let plateTotal = 0;
                 formData.platesUsed.forEach(plate => {
-                  plateTotal += (plate.count || 0) * (plate.rate || 0);
+                  if (!plate.isCancelled) {
+                    plateTotal += (plate.count || 0) * (plate.rate || 0);
+                  }
                 });
 
                 let processTotal = 0;
@@ -2912,7 +3290,15 @@ export function JobManagement() {
                   processTotal += (pc.amount || 0);
                 });
 
-                const grandTotal = paperTotal + plateTotal + processTotal;
+                let laminationTotal = 0;
+                if (formData.lamination?.halfEnabled) {
+                  laminationTotal += (formData.lamination.halfQty || 0) * (formData.lamination.halfRate || 0);
+                }
+                if (formData.lamination?.fullEnabled) {
+                  laminationTotal += (formData.lamination.fullQty || 0) * (formData.lamination.fullRate || 0);
+                }
+
+                const grandTotal = paperTotal + plateTotal + processTotal + laminationTotal;
 
                 if (grandTotal > 0) {
                   return (
@@ -2925,6 +3311,12 @@ export function JobManagement() {
                         <span className="text-right font-semibold">₹{plateTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         <span>Process charges:</span>
                         <span className="text-right font-semibold">₹{processTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        {(formData.lamination?.halfEnabled || formData.lamination?.fullEnabled) && (
+                          <>
+                            <span>Lamination charges:</span>
+                            <span className="text-right font-semibold">₹{laminationTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </>
+                        )}
                         <div className="col-span-2 border-t border-slate-200 pt-1.5 flex justify-between items-center text-sm font-bold text-slate-900 font-serif">
                           <span>Total Estimated Cost:</span>
                           <span className="text-right font-mono text-[#A8201A]">₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>

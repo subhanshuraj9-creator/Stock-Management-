@@ -641,13 +641,13 @@ export function PartyLedger() {
 
       let plateTotal = 0;
       const plateDetails: string[] = [];
-      const platesToProcess = [...(job.platesUsed || [])];
+      const platesToProcess = [...(job.platesUsed || [])].filter(p => !p.isCancelled);
 
       if (job.isJoint && job.jointRef) {
         const cleanRef = job.jointRef.trim().toUpperCase().replace('#', '');
         const referencedJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
         if (referencedJob && referencedJob.platesUsed) {
-          referencedJob.platesUsed.forEach(refPlate => {
+          referencedJob.platesUsed.filter(p => !p.isCancelled).forEach(refPlate => {
             const isDuplicate = platesToProcess.some(p => p.plateId === refPlate.plateId);
             if (!isDuplicate) {
               platesToProcess.push({
@@ -680,14 +680,31 @@ export function PartyLedger() {
         }
       });
 
-      const totalDebit = paperTotal + plateTotal + processTotal;
+      let laminationTotal = 0;
+      const laminationDetails: string[] = [];
+      if (job.lamination?.halfEnabled) {
+        const halfTotal = (job.lamination.halfQty || 0) * (job.lamination.halfRate || 0);
+        if (halfTotal > 0) {
+          laminationTotal += halfTotal;
+          laminationDetails.push(`Half Lamination: ${job.lamination.halfQty?.toLocaleString()} sheets @ ₹${(job.lamination.halfRate || 0).toFixed(2)}/sh`);
+        }
+      }
+      if (job.lamination?.fullEnabled) {
+        const fullTotal = (job.lamination.fullQty || 0) * (job.lamination.fullRate || 0);
+        if (fullTotal > 0) {
+          laminationTotal += fullTotal;
+          laminationDetails.push(`Full Lamination: ${job.lamination.fullQty?.toLocaleString()} sheets @ ₹${(job.lamination.fullRate || 0).toFixed(2)}/sh`);
+        }
+      }
+
+      const totalDebit = paperTotal + plateTotal + processTotal + laminationTotal;
 
       allTransactions.push({
         id: job.id,
         date: job.date,
         type: 'debit',
         title: job.jobDescription,
-        details: [...paperDetails, ...plateDetails, ...processDetails],
+        details: [...paperDetails, ...plateDetails, ...processDetails, ...laminationDetails],
         amount: totalDebit,
         reference: job
       });

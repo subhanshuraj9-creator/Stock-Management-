@@ -1079,6 +1079,34 @@ export function StockManagement() {
               </div>
             </div>
 
+            {/* Metadata and stock quantity details */}
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs text-gray-500 font-mono">
+              {!!stock.gsm && (
+                <div className="flex flex-col gap-0.5 border-r border-gray-100 pr-2">
+                  <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none">Weight</span>
+                  <span className="text-gray-800 font-semibold">{stock.gsm} GSM</span>
+                </div>
+              )}
+              {!!stock.size && (
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none">Size</span>
+                  <span className="text-gray-800 font-semibold">{stock.size}</span>
+                </div>
+              )}
+              <div className="flex flex-col gap-0.5 col-span-2 bg-[#5A5A40]/5 p-2.5 rounded-xl mt-1">
+                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider leading-none mb-1">Available Stock Balance</span>
+                <span className="text-sm font-extrabold text-[#5A5A40]">
+                  {stock.type === 'paper' || stock.type === 'board'
+                    ? `${stock.quantity.toLocaleString()} sheets`
+                    : stock.type === 'plate'
+                      ? `${stock.quantity.toLocaleString()} plates`
+                      : stock.type === 'ink'
+                        ? `${stock.quantity.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kg`
+                        : `${stock.quantity.toLocaleString()} units`}
+                </span>
+              </div>
+            </div>
+
             {stock.type === 'ink' && stock.inkContainers && stock.inkContainers.length > 0 && (
               <div className="bg-purple-55 border border-purple-100/40 p-2.5 rounded-xl text-[10px] text-purple-900 flex flex-col gap-1">
                 <span className="font-extrabold text-purple-700 uppercase tracking-widest text-[8px]">Available Containers:</span>

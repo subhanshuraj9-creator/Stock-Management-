@@ -429,8 +429,15 @@ export function JobPreviewModal({ isOpen, onClose, job: initialJob, stocks, jobs
                                 return (
                                   <tr key={`print-spec-plate-${idx}`} className="hover:bg-gray-50/20">
                                     <td className="p-2 font-sans font-medium">
-                                      {stockPlate?.name || 'Standard CTP Plate'} 
-                                      {stockPlate?.size ? ` (${stockPlate.size})` : ''}
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        <span>{stockPlate?.name || 'Standard CTP Plate'} {stockPlate?.size ? ` (${stockPlate.size})` : ''}</span>
+                                        {p.isReused && (
+                                          <span className="text-[10px] bg-slate-100 text-slate-700 font-bold px-1.5 py-0.5 rounded border border-slate-200">Same Plate/Reused</span>
+                                        )}
+                                        {p.isCancelled && (
+                                          <span className="text-[10px] bg-red-50 text-red-700 font-bold px-1.5 py-0.5 rounded border border-red-100 animate-pulse">Cancelled (Not in Invoice)</span>
+                                        )}
+                                      </div>
                                     </td>
                                     <td className="p-2 text-center font-mono font-medium">
                                       {p.count} units
@@ -458,21 +465,50 @@ export function JobPreviewModal({ isOpen, onClose, job: initialJob, stocks, jobs
                       <h4 className="font-serif text-xs font-bold uppercase tracking-wider text-amber-950 flex items-center gap-1.5 pb-1 border-b border-gray-100">
                         3. Finishing & Post-Press Operations
                       </h4>
-                      {processCharges.length === 0 ? (
+                      {processCharges.length === 0 && !job.lamination?.halfEnabled && !job.lamination?.fullEnabled ? (
                         <p className="text-gray-400 italic text-xs py-1">No custom finishing processes designated.</p>
                       ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                          {processCharges.map((pc) => (
-                            <div key={`print-spec-process-${pc.id}`} className="flex items-start gap-2 p-2 rounded-lg bg-gray-50/50 border border-gray-100 print-no-bg">
-                              <span className="w-4 h-4 rounded-full border border-emerald-500 bg-emerald-50 text-emerald-700 flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5 print-no-bg">✓</span>
-                              <div className="space-y-0.5">
-                                <span className="font-medium text-gray-800">{pc.name}</span>
-                                {pc.notes && (
-                                  <p className="text-[10px] text-gray-500 italic leading-snug">Ref: {pc.notes}</p>
-                                )}
-                              </div>
+                        <div className="space-y-3">
+                          {/* Lamination Section in Ticket */}
+                          {(job.lamination?.halfEnabled || job.lamination?.fullEnabled) && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                              {job.lamination?.halfEnabled && (
+                                <div className="p-2.5 rounded-lg bg-yellow-50/50 border border-yellow-105 flex items-start gap-2 print-no-bg">
+                                  <span className="w-4 h-4 rounded-full border border-yellow-500 bg-yellow-50 text-yellow-700 flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5 font-sans print-no-bg">✓</span>
+                                  <div className="space-y-0.5">
+                                    <span className="font-bold text-gray-800 text-[11px]">Half Lamination</span>
+                                    <p className="text-[10px] text-gray-600 font-medium">Quantity: {job.lamination.halfQty?.toLocaleString()} pcs @ ₹{job.lamination.halfRate?.toFixed(2)}/pc</p>
+                                  </div>
+                                </div>
+                              )}
+                              {job.lamination?.fullEnabled && (
+                                <div className="p-2.5 rounded-lg bg-orange-50/50 border border-orange-105 flex items-start gap-2 print-no-bg">
+                                  <span className="w-4 h-4 rounded-full border border-orange-500 bg-orange-50 text-orange-700 flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5 font-sans print-no-bg">✓</span>
+                                  <div className="space-y-0.5">
+                                    <span className="font-bold text-gray-800 text-[11px]">Full Lamination</span>
+                                    <p className="text-[10px] text-gray-600 font-medium">Quantity: {job.lamination.fullQty?.toLocaleString()} pcs @ ₹{job.lamination.fullRate?.toFixed(2)}/pc</p>
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                          ))}
+                          )}
+
+                          {/* Custom process list */}
+                          {processCharges.length > 0 && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                              {processCharges.map((pc) => (
+                                <div key={`print-spec-process-${pc.id}`} className="flex items-start gap-2 p-2 rounded-lg bg-gray-50/50 border border-gray-100 print-no-bg">
+                                  <span className="w-4 h-4 rounded-full border border-emerald-500 bg-emerald-50 text-emerald-700 flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5 print-no-bg">✓</span>
+                                  <div className="space-y-0.5">
+                                    <span className="font-medium text-gray-800">{pc.name}</span>
+                                    {pc.notes && (
+                                      <p className="text-[10px] text-gray-500 italic leading-snug">Ref: {pc.notes}</p>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

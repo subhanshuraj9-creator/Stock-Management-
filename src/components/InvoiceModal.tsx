@@ -168,12 +168,12 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
   // Resolve plates used (including joint job plates lookup)
   const resolvedPlates = React.useMemo(() => {
     if (!job) return [];
-    const list = [...(job.platesUsed || [])];
+    const list = [...(job.platesUsed || [])].filter(p => !p.isCancelled);
     if (job.isJoint && job.jointRef && jobs && jobs.length > 0) {
       const cleanRef = job.jointRef.trim().toUpperCase().replace('#', '');
       const referencedJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
       if (referencedJob && referencedJob.platesUsed) {
-        referencedJob.platesUsed.forEach(refPlate => {
+        referencedJob.platesUsed.filter(p => !p.isCancelled).forEach(refPlate => {
           const isDuplicate = list.some(p => p.plateId === refPlate.plateId);
           if (!isDuplicate) {
             list.push({
@@ -200,7 +200,16 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
   }, 0);
   const platesTotal = resolvedPlates.reduce((sum, plate) => sum + ((plate.count || 0) * (plate.rate || 0)), 0);
   const processesTotal = (job.processCharges || []).reduce((sum, pc) => sum + (pc.amount || 0), 0);
-  const grandTotal = papersTotal + platesTotal + processesTotal;
+  
+  const halfLaminationTotal = job.lamination?.halfEnabled
+    ? (job.lamination.halfQty || 0) * (job.lamination.halfRate || 0)
+    : 0;
+  const fullLaminationTotal = job.lamination?.fullEnabled
+    ? (job.lamination.fullQty || 0) * (job.lamination.fullRate || 0)
+    : 0;
+  const laminationTotal = halfLaminationTotal + fullLaminationTotal;
+
+  const grandTotal = papersTotal + platesTotal + processesTotal + laminationTotal;
 
   const activeColor = ACCENT_COLORS[accentColor] || ACCENT_COLORS.original;
   const activeTheme = LAYOUT_THEMES[layoutTheme] || LAYOUT_THEMES.classic;
@@ -267,6 +276,39 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
         </tr>
       `;
     }).join('');
+
+    let printLaminationRows = '';
+    const lam = job.lamination;
+    if (lam) {
+      const rows: string[] = [];
+      if (lam.halfEnabled) {
+        const halfTotal = (lam.halfQty || 0) * (lam.halfRate || 0);
+        rows.push(`
+          <tr>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); font-size: 13px;">
+              Half Lamination
+            </td>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace;">${(lam.halfQty || 0).toLocaleString()}</td>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace;">₹${(lam.halfRate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-weight: bold; font-family: monospace;">₹${halfTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          </tr>
+        `);
+      }
+      if (lam.fullEnabled) {
+        const fullTotal = (lam.fullQty || 0) * (lam.fullRate || 0);
+        rows.push(`
+          <tr>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); font-size: 13px;">
+              Full Lamination
+            </td>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace;">${(lam.fullQty || 0).toLocaleString()}</td>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace;">₹${(lam.fullRate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-weight: bold; font-family: monospace;">₹${fullTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          </tr>
+        `);
+      }
+      printLaminationRows = rows.join('');
+    }
 
     const htmlContent = `
       <!DOCTYPE html>
@@ -487,6 +529,13 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                 </tr>
                 ${processRows}
               ` : ''}
+
+              ${printLaminationRows ? `
+                <tr class="section-title-row">
+                  <td colspan="4">LAMINATION SERVICES</td>
+                </tr>
+                ${printLaminationRows}
+              ` : ''}
             </tbody>
           </table>
 
@@ -503,6 +552,12 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
               <td>Processes Total:</td>
               <td style="text-align: right; font-family: monospace;">₹${processesTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
             </tr>
+            ${laminationTotal > 0 ? `
+            <tr>
+              <td>Lamination Total:</td>
+              <td style="text-align: right; font-family: monospace;">₹${laminationTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            </tr>
+            ` : ''}
             <tr class="grand-total-row">
               <td>Grand Total:</td>
               <td style="text-align: right; font-family: monospace; color: white;">₹${grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
@@ -599,6 +654,39 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
         </tr>
       `;
     }).join('');
+
+    let downloadLaminationRows = '';
+    const lamInfo = job.lamination;
+    if (lamInfo) {
+      const rows: string[] = [];
+      if (lamInfo.halfEnabled) {
+        const halfTotal = (lamInfo.halfQty || 0) * (lamInfo.halfRate || 0);
+        rows.push(`
+          <tr>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; font-size: 13.5px; color:#2d3748;">
+              Half Lamination
+            </td>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#4a5568;">${(lamInfo.halfQty || 0).toLocaleString()}</td>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#4a5568;">₹${(lamInfo.halfRate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-weight: bold; font-family: Menlo, Monaco, monospace; color:#1a202c;">₹${halfTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          </tr>
+        `);
+      }
+      if (lamInfo.fullEnabled) {
+        const fullTotal = (lamInfo.fullQty || 0) * (lamInfo.fullRate || 0);
+        rows.push(`
+          <tr>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; font-size: 13.5px; color:#2d3748;">
+              Full Lamination
+            </td>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#4a5568;">${(lamInfo.fullQty || 0).toLocaleString()}</td>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#4a5568;">₹${(lamInfo.fullRate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-weight: bold; font-family: Menlo, Monaco, monospace; color:#1a202c;">₹${fullTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          </tr>
+        `);
+      }
+      downloadLaminationRows = rows.join('');
+    }
 
     const dlHtml = `
       <!DOCTYPE html>
@@ -892,6 +980,13 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                   </tr>
                   ${processRows}
                 ` : ''}
+
+                ${downloadLaminationRows ? `
+                  <tr class="sec-header">
+                    <td colspan="4">IV. LAMINATION CHARGES & SERVICES</td>
+                  </tr>
+                  ${downloadLaminationRows}
+                ` : ''}
               </tbody>
             </table>
 
@@ -908,6 +1003,12 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                 <td>Process charges total:</td>
                 <td style="text-align: right; font-family: Menlo, Monaco, monospace;">₹${processesTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
               </tr>
+              ${laminationTotal > 0 ? `
+              <tr>
+                <td>Lamination total:</td>
+                <td style="text-align: right; font-family: Menlo, Monaco, monospace;">₹${laminationTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+              </tr>
+              ` : ''}
               <tr class="total-row">
                 <td style="font-weight: bold; border-radius: 6px 0 0 6px;">GRAND TOTAL BALANCE:</td>
                 <td style="text-align: right; font-family: Menlo, Monaco, monospace; font-weight: bold; border-radius: 0 6px 6px 0;">₹${grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
@@ -1171,6 +1272,30 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                     <span className="font-mono font-semibold text-gray-900">₹{pc.amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                   </div>
                 ))}
+
+                {/* Lamination services */}
+                {job.lamination?.halfEnabled && (
+                  <div className="flex justify-between items-start text-xs font-sans py-1 hover:bg-gray-50 rounded px-1 border-t border-dashed mt-1 pt-1">
+                    <div>
+                      <span className="font-medium text-gray-850">Half Lamination</span>
+                      <div className="text-[10px] text-gray-400">
+                        {job.lamination.halfQty || 0} sheets @ ₹{(job.lamination.halfRate || 0).toFixed(2)}/sh
+                      </div>
+                    </div>
+                    <span className="font-mono font-semibold text-gray-900">₹{((job.lamination.halfQty || 0) * (job.lamination.halfRate || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                )}
+                {job.lamination?.fullEnabled && (
+                  <div className="flex justify-between items-start text-xs font-sans py-1 hover:bg-gray-50 rounded px-1 border-t border-dashed mt-1 pt-1">
+                    <div>
+                      <span className="font-medium text-gray-850">Full Lamination</span>
+                      <div className="text-[10px] text-gray-400">
+                        {job.lamination.fullQty || 0} sheets @ ₹{(job.lamination.fullRate || 0).toFixed(2)}/sh
+                      </div>
+                    </div>
+                    <span className="font-mono font-semibold text-gray-900">₹{((job.lamination.fullQty || 0) * (job.lamination.fullRate || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1188,6 +1313,12 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                 <span>Operations process charges:</span>
                 <span className="font-mono font-medium">₹{processesTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
               </div>
+              {laminationTotal > 0 && (
+                <div className="flex justify-between w-[220px]">
+                  <span>Lamination total:</span>
+                  <span className="font-mono font-medium">₹{laminationTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                </div>
+              )}
               <div className="flex justify-between w-[220px] pt-2 border-t font-semibold text-gray-950 bg-gray-50 p-2 rounded-xl">
                 <span>Grand Total Billed:</span>
                 <span className="font-mono text-sm font-bold" style={{ color: activeColor.primary }}>₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
