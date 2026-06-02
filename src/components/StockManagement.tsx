@@ -96,6 +96,11 @@ export function StockManagement() {
   const [newSectionName, setNewSectionName] = useState('');
   const [isAddingNewSectInline, setIsAddingNewSectInline] = useState(false);
   const [newSectInlineName, setNewSectInlineName] = useState('');
+
+  const [selectedBoardType, setSelectedBoardType] = useState('all');
+  const [boardSections, setBoardSections] = useState<{ id: string, name: string }[]>([]);
+  const [isManageBoardSectionsOpen, setIsManageBoardSectionsOpen] = useState(false);
+  const [newBoardSectionName, setNewBoardSectionName] = useState('');
   
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -105,6 +110,8 @@ export function StockManagement() {
   const [stockToDelete, setStockToDelete] = useState<StockItem | null>(null);
   const [purchaseToDelete, setPurchaseToDelete] = useState<StockHistory | null>(null);
   const [isDeletingPurchase, setIsDeletingPurchase] = useState(false);
+  const [usageToDelete, setUsageToDelete] = useState<StockHistory | null>(null);
+  const [isDeletingUsage, setIsDeletingUsage] = useState(false);
 
   const availablePaperSections = React.useMemo(() => {
     const userSectNames = paperSections.map(s => s.name);
@@ -115,6 +122,16 @@ export function StockManagement() {
     const unique = Array.from(new Set([...userSectNames, ...stockSectNames]));
     return unique.sort((a, b) => a.localeCompare(b));
   }, [paperSections, stocks]);
+
+  const availableBoardSections = React.useMemo(() => {
+    const userSectNames = boardSections.map(s => s.name);
+    // Include unique board types from actual stock items to avoid lost groups
+    const stockSectNames = stocks
+      .filter(s => s.type === 'board' && s.paperType)
+      .map(s => s.paperType!);
+    const unique = Array.from(new Set([...userSectNames, ...stockSectNames]));
+    return unique.sort((a, b) => a.localeCompare(b));
+  }, [boardSections, stocks]);
 
   const [isPurchaseOpen, setIsPurchaseOpen] = useState(false);
   const [selectedStockForPurchase, setSelectedStockForPurchase] = useState<StockItem | null>(null);
@@ -136,6 +153,7 @@ export function StockManagement() {
   const [usageFormData, setUsageFormData] = useState({
     weight: '',
     count: '',
+    quantity: '',
     notes: ''
   });
 
@@ -183,11 +201,20 @@ export function StockManagement() {
       console.error('Error listening to paperSections:', error);
     });
 
+    const boardSectionsQ = query(collection(db, 'boardSections'), orderBy('name', 'asc'));
+    const unsubscribeBoardSections = onSnapshot(boardSectionsQ, (snapshot) => {
+      const sects = snapshot.docs.map(doc => ({ id: doc.id, name: doc.data().name as string }));
+      setBoardSections(sects);
+    }, (error) => {
+      console.error('Error listening to boardSections:', error);
+    });
+
     return () => {
       unsubscribe();
       unsubscribeUsage();
       unsubscribeHistory();
       unsubscribeSections();
+      unsubscribeBoardSections();
     };
   }, []);
 
@@ -195,49 +222,71 @@ export function StockManagement() {
     e.preventDefault();
     if (!selectedInk) return;
 
-    const weight = Number(usageFormData.weight);
-    const count = Number(usageFormData.count);
-
     try {
       await runTransaction(db, async (transaction) => {
         const stockRef = doc(db, 'stocks', selectedInk.id);
         const stockSnap = await transaction.get(stockRef);
         
-        if (!stockSnap.exists()) throw new Error("Ink stock not found");
+        if (!stockSnap.exists()) throw new Error("Stock item not found");
         const stockData = stockSnap.data() as StockItem;
         
-        const containerIndex = stockData.inkContainers?.findIndex(c => c.weight === weight);
-        if (containerIndex === undefined || containerIndex === -1) {
-          throw new Error(`No containers with weight ${weight}kg found in stock`);
-        }
-
-        if (stockData.inkContainers![containerIndex].count < count) {
-          throw new Error(`Insufficient containers. Only ${stockData.inkContainers![containerIndex].count} left.`);
-        }
-
-        const newContainers = [...stockData.inkContainers!];
-        newContainers[containerIndex] = {
-          ...newContainers[containerIndex],
-          count: newContainers[containerIndex].count - count
-        };
-
-        // Remove if count is 0? Maybe keep it but with 0 count.
-        // Let's keep it for now.
-
-        const newTotalQuantity = newContainers.reduce((sum, c) => sum + (c.weight * c.count), 0);
-
-        transaction.update(stockRef, cleanUndefined({
-          inkContainers: newContainers,
-          quantity: newTotalQuantity,
+        let newTotalQuantity = 0;
+        let updateData: any = {
           lastUpdated: Date.now()
-        }));
+        };
+        let deductedQuantity = 0;
+        let usageNotesMsg = '';
+
+        if (selectedInk.type === 'ink') {
+          const weight = Number(usageFormData.weight);
+          const count = Number(usageFormData.count);
+          
+          const containerIndex = stockData.inkContainers?.findIndex(c => c.weight === weight);
+          if (containerIndex === undefined || containerIndex === -1) {
+            throw new Error(`No containers with weight ${weight}kg found in stock`);
+          }
+
+          if (stockData.inkContainers![containerIndex].count < count) {
+            throw new Error(`Insufficient containers. Only ${stockData.inkContainers![containerIndex].count} left.`);
+          }
+
+          const newContainers = [...stockData.inkContainers!];
+          newContainers[containerIndex] = {
+            ...newContainers[containerIndex],
+            count: newContainers[containerIndex].count - count
+          };
+
+          newTotalQuantity = newContainers.reduce((sum, c) => sum + (c.weight * c.count), 0);
+          updateData.inkContainers = newContainers;
+          updateData.quantity = newTotalQuantity;
+          deductedQuantity = weight * count;
+          usageNotesMsg = `Ink usage: ${count}x ${weight}kg. ${usageFormData.notes}`;
+        } else {
+          const qtyToDeduct = Number(usageFormData.quantity);
+          if (isNaN(qtyToDeduct) || qtyToDeduct <= 0) {
+            throw new Error("Please enter a valid quantity to deduct");
+          }
+          if (stockData.quantity < qtyToDeduct) {
+            throw new Error(`Insufficient stock. Only ${stockData.quantity} available.`);
+          }
+          newTotalQuantity = stockData.quantity - qtyToDeduct;
+          updateData.quantity = newTotalQuantity;
+          deductedQuantity = qtyToDeduct;
+          const unitLabel = selectedInk.type === 'plate' ? 'units' : 'sheets';
+          usageNotesMsg = `${selectedInk.type.charAt(0).toUpperCase() + selectedInk.type.slice(1)} usage: ${qtyToDeduct} ${unitLabel}. ${usageFormData.notes}`;
+        }
+
+        transaction.update(stockRef, cleanUndefined(updateData));
 
         const usageRef = doc(collection(db, 'inkUsage'));
+        // We write to standard usage collection
         transaction.set(usageRef, cleanUndefined({
           inkId: selectedInk.id,
           date: Date.now(),
-          weight,
-          count,
+          weight: selectedInk.type === 'ink' ? Number(usageFormData.weight) : null,
+          count: selectedInk.type === 'ink' ? Number(usageFormData.count) : null,
+          quantity: selectedInk.type !== 'ink' ? Number(usageFormData.quantity) : null,
+          stockType: selectedInk.type,
           notes: usageFormData.notes
         }));
 
@@ -246,16 +295,16 @@ export function StockManagement() {
           stockId: selectedInk.id,
           date: Date.now(),
           type: 'usage',
-          quantity: -(weight * count),
+          quantity: -deductedQuantity,
           previousQuantity: stockData.quantity,
           newQuantity: newTotalQuantity,
-          notes: `Ink usage: ${count}x ${weight}kg. ${usageFormData.notes}`
+          notes: usageNotesMsg
         }));
       });
 
       setIsUsageOpen(false);
-      setUsageFormData({ weight: '', count: '', notes: '' });
-      toast.success('Ink usage recorded successfully');
+      setUsageFormData({ weight: '', count: '', quantity: '', notes: '' });
+      toast.success('Usage recorded successfully');
     } catch (error: any) {
       toast.error(error.message || 'Failed to record usage');
     }
@@ -274,7 +323,7 @@ export function StockManagement() {
           formData.type === 'paper' 
             ? `${pTypeVal} - ${formData.gsm} GSM - ${formData.size || 'Standard'}`
             : formData.type === 'board'
-            ? `Board - ${formData.gsm} GSM - ${formData.size || 'Standard'}`
+            ? `${pTypeVal} - ${formData.gsm} GSM - ${formData.size || 'Standard'}`
             : formData.type === 'plate'
             ? `Plate - ${formData.size || 'Standard'}`
             : formData.type === 'ink'
@@ -296,11 +345,17 @@ export function StockManagement() {
         if (formData.type === 'paper' || formData.type === 'board') {
           newStock.gsm = Number(formData.gsm);
           newStock.size = formData.size;
+          newStock.paperType = pTypeVal;
           if (formData.type === 'paper') {
-            newStock.paperType = pTypeVal;
             const isExisting = paperSections.some(s => s.name.toLowerCase() === pTypeVal.toLowerCase());
             if (!isExisting && pTypeVal !== 'Other' && pTypeVal.trim() !== '') {
               const sectRef = doc(collection(db, 'paperSections'));
+              transaction.set(sectRef, { name: pTypeVal, createdAt: Date.now() });
+            }
+          } else if (formData.type === 'board') {
+            const isExisting = boardSections.some(s => s.name.toLowerCase() === pTypeVal.toLowerCase());
+            if (!isExisting && pTypeVal !== 'Other' && pTypeVal.trim() !== '') {
+              const sectRef = doc(collection(db, 'boardSections'));
               transaction.set(sectRef, { name: pTypeVal, createdAt: Date.now() });
             }
           }
@@ -356,7 +411,7 @@ export function StockManagement() {
           formData.type === 'paper' 
             ? `${pTypeVal} - ${formData.gsm} GSM - ${formData.size || 'Standard'}`
             : formData.type === 'board'
-            ? `Board - ${formData.gsm} GSM - ${formData.size || 'Standard'}`
+            ? `${pTypeVal} - ${formData.gsm} GSM - ${formData.size || 'Standard'}`
             : formData.type === 'plate'
             ? `Plate - ${formData.size || 'Standard'}`
             : formData.type === 'ink'
@@ -381,11 +436,17 @@ export function StockManagement() {
         if (formData.type === 'paper' || formData.type === 'board') {
           updatedData.gsm = Number(formData.gsm);
           updatedData.size = formData.size;
+          updatedData.paperType = pTypeVal;
           if (formData.type === 'paper') {
-            updatedData.paperType = pTypeVal;
             const isExisting = paperSections.some(s => s.name.toLowerCase() === pTypeVal.toLowerCase());
             if (!isExisting && pTypeVal !== 'Other' && pTypeVal.trim() !== '') {
               const sectRef = doc(collection(db, 'paperSections'));
+              transaction.set(sectRef, { name: pTypeVal, createdAt: Date.now() });
+            }
+          } else if (formData.type === 'board') {
+            const isExisting = boardSections.some(s => s.name.toLowerCase() === pTypeVal.toLowerCase());
+            if (!isExisting && pTypeVal !== 'Other' && pTypeVal.trim() !== '') {
+              const sectRef = doc(collection(db, 'boardSections'));
               transaction.set(sectRef, { name: pTypeVal, createdAt: Date.now() });
             }
           }
@@ -795,6 +856,69 @@ export function StockManagement() {
     }
   };
 
+  const handleDeleteUsage = async () => {
+    if (!usageToDelete) return;
+    setIsDeletingUsage(true);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const historyRef = doc(db, 'stockHistory', usageToDelete.id);
+        const historySnap = await transaction.get(historyRef);
+        if (!historySnap.exists()) {
+          throw new Error('Usage record not found.');
+        }
+
+        const pData = historySnap.data() as StockHistory;
+        
+        // Find the stock
+        const stockRef = doc(db, 'stocks', pData.stockId);
+        const stockSnap = await transaction.get(stockRef);
+        
+        if (stockSnap.exists()) {
+          const sData = stockSnap.data() as StockItem;
+          // quantity in history is negative for usages, e.g. -10
+          const usedQty = Math.abs(pData.quantity);
+          const revertedQuantity = sData.quantity + usedQty;
+          const updatedFields: Partial<StockItem> = {
+            quantity: revertedQuantity,
+            lastUpdated: Date.now()
+          };
+
+          // If ink check
+          if (sData.type === 'ink' && sData.inkContainers) {
+            const curContainers = [...sData.inkContainers];
+            const containersMatch = pData.notes?.match(/Ink usage:\s*(\d+)x\s*([\d.]+)\s*kg/i);
+            if (containersMatch) {
+              const countToAdd = parseInt(containersMatch[1], 10);
+              const weightToAdd = parseFloat(containersMatch[2]);
+              if (!isNaN(countToAdd) && !isNaN(weightToAdd)) {
+                const idx = curContainers.findIndex(c => c.weight === weightToAdd);
+                if (idx !== -1) {
+                  curContainers[idx] = { ...curContainers[idx], count: curContainers[idx].count + countToAdd };
+                } else {
+                  curContainers.push({ weight: weightToAdd, count: countToAdd });
+                }
+              }
+            }
+            updatedFields.inkContainers = curContainers;
+          }
+
+          transaction.update(stockRef, cleanUndefined(updatedFields));
+        }
+
+        // Delete from history
+        transaction.delete(historyRef);
+      });
+
+      toast.success('Usage record deleted and stock reverted successfully');
+      setUsageToDelete(null);
+    } catch (error) {
+      console.error(error);
+      toast.error(error instanceof Error ? error.message : 'Failed to delete usage. Please try again.');
+    } finally {
+      setIsDeletingUsage(false);
+    }
+  };
+
   const filteredStocks = stocks.filter(stock => 
     stock.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (stock.size && stock.size.toLowerCase().includes(searchTerm.toLowerCase()))
@@ -820,7 +944,7 @@ export function StockManagement() {
                 <TableCell className="font-medium pl-4 md:pl-6 py-3 md:py-4">
                   <div className="flex flex-col gap-1">
                     <span className="text-gray-900">{stock.name}</span>
-                    {stock.type === 'paper' && stock.paperType && (
+                    {(stock.type === 'paper' || stock.type === 'board') && stock.paperType && (
                       <span className="inline-flex self-start text-[9px] font-bold text-[#5A5A40] bg-[#5A5A40]/10 px-2 py-0.5 rounded-full uppercase tracking-wider">
                         {stock.paperType}
                       </span>
@@ -843,20 +967,24 @@ export function StockManagement() {
                 </TableCell>
                 <TableCell className="text-right pr-4 md:pr-6">
                   <div className="flex justify-end gap-1 md:gap-2 md:opacity-0 group-hover:opacity-100 transition-opacity animate-none">
-                    {stock.type === 'ink' && (
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className="h-7 w-7 md:h-8 md:w-8 text-gray-400 hover:text-purple-600"
-                        onClick={() => {
-                          setSelectedInk(stock);
-                          setIsUsageOpen(true);
-                        }}
-                        title="Record Usage"
-                      >
-                        <ArrowRight className="h-3 w-3 md:h-4 md:w-4" />
-                      </Button>
-                    )}
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-7 w-7 md:h-8 md:w-8 text-gray-400 hover:text-purple-600"
+                      onClick={() => {
+                        setSelectedInk(stock);
+                        setUsageFormData({
+                          weight: stock.type === 'ink' ? (stock.inkContainers?.[0]?.weight?.toString() || '') : '',
+                          count: '',
+                          quantity: '',
+                          notes: ''
+                        });
+                        setIsUsageOpen(true);
+                      }}
+                      title="Record Usage"
+                    >
+                      <ArrowRight className="h-3 w-3 md:h-4 md:w-4" />
+                    </Button>
                     <Button 
                       variant="ghost" 
                       size="icon" 
@@ -943,6 +1071,11 @@ export function StockManagement() {
             <div className="flex justify-between items-start gap-4">
               <div className="min-w-0 flex-1">
                 <h4 className="font-serif font-medium text-gray-900 text-sm break-words leading-snug">{stock.name}</h4>
+                {(stock.type === 'paper' || stock.type === 'board') && stock.paperType && (
+                  <span className="inline-flex self-start text-[9px] font-bold text-[#5A5A40] bg-[#5A5A40]/10 px-2 py-0.5 rounded-full uppercase tracking-wider mt-1">
+                    {stock.paperType}
+                  </span>
+                )}
               </div>
             </div>
 
@@ -956,19 +1089,23 @@ export function StockManagement() {
             <div className="flex items-center justify-between gap-2 pt-2 border-t border-gray-50">
               <span className="text-[10px] font-mono text-gray-400 uppercase tracking-wider">Actions</span>
               <div className="flex items-center gap-1.5 flex-wrap">
-                {stock.type === 'ink' && (
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="h-8 px-2.5 rounded-full text-[11px] text-purple-650 hover:bg-purple-50 shadow-2xs border-purple-200"
-                    onClick={() => {
-                      setSelectedInk(stock);
-                      setIsUsageOpen(true);
-                    }}
-                  >
-                    <ArrowRight className="h-3.5 w-3.5 mr-1" /> Record Use
-                  </Button>
-                )}
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="h-8 px-2.5 rounded-full text-[11px] text-purple-650 hover:bg-purple-50 shadow-2xs border-purple-200"
+                  onClick={() => {
+                    setSelectedInk(stock);
+                    setUsageFormData({
+                      weight: stock.type === 'ink' ? (stock.inkContainers?.[0]?.weight?.toString() || '') : '',
+                      count: '',
+                      quantity: '',
+                      notes: ''
+                    });
+                    setIsUsageOpen(true);
+                  }}
+                >
+                  <ArrowRight className="h-3.5 w-3.5 mr-1" /> Record Use
+                </Button>
                 <Button 
                   variant="outline" 
                   size="sm" 
@@ -1424,6 +1561,353 @@ export function StockManagement() {
     );
   };
 
+  const UsageSummaryView = () => {
+    const [searchQuery, setSearchQuery] = useState('');
+    const [typeFilter, setTypeFilter] = useState<'all' | 'paper' | 'board' | 'ink' | 'plate'>('all');
+    const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'qty-desc' | 'qty-asc' | 'value-desc' | 'value-asc'>('date-desc');
+
+    const usagesOnly = stockHistory.filter(h => h.type === 'usage');
+
+    const augmentedUsages = usagesOnly.map(h => {
+      const stock = stocks.find(s => s.id === h.stockId);
+      const totalQty = Math.abs(h.quantity);
+      const unitRate = stock?.defaultRate || 0;
+      const estimatedValue = totalQty * unitRate;
+      return {
+        ...h,
+        stock,
+        totalQty,
+        unitRate,
+        estimatedValue
+      };
+    });
+
+    const filteredUsages = augmentedUsages.filter(u => {
+      const matchesType = typeFilter === 'all' || u.stock?.type === typeFilter;
+      
+      const searchLower = searchQuery.toLowerCase().trim();
+      const matchesSearch = !searchLower ||
+        (u.stock?.name || '').toLowerCase().includes(searchLower) ||
+        (u.notes || '').toLowerCase().includes(searchLower);
+
+      return matchesType && matchesSearch;
+    });
+
+    const sortedUsages = [...filteredUsages].sort((a, b) => {
+      if (sortBy === 'date-desc') return b.date - a.date;
+      if (sortBy === 'date-asc') return a.date - b.date;
+      if (sortBy === 'qty-desc') return b.totalQty - a.totalQty;
+      if (sortBy === 'qty-asc') return a.totalQty - b.totalQty;
+      if (sortBy === 'value-desc') return b.estimatedValue - a.estimatedValue;
+      if (sortBy === 'value-asc') return a.estimatedValue - b.estimatedValue;
+      return 0;
+    });
+
+    const totalConsumptionValue = augmentedUsages.reduce((sum, u) => sum + u.estimatedValue, 0);
+    const filteredConsumptionValue = filteredUsages.reduce((sum, u) => sum + u.estimatedValue, 0);
+    const totalTransactionsCount = augmentedUsages.length;
+    const filteredTransactionsCount = filteredUsages.length;
+
+    // Type Breakdown
+    const typeBreakdown = {
+      paper: augmentedUsages.filter(u => u.stock?.type === 'paper').reduce((sum, u) => sum + u.estimatedValue, 0),
+      board: augmentedUsages.filter(u => u.stock?.type === 'board').reduce((sum, u) => sum + u.estimatedValue, 0),
+      ink: augmentedUsages.filter(u => u.stock?.type === 'ink').reduce((sum, u) => sum + u.estimatedValue, 0),
+      plate: augmentedUsages.filter(u => u.stock?.type === 'plate').reduce((sum, u) => sum + u.estimatedValue, 0),
+    };
+
+    // Most Used Stock Item
+    const usageCounts: Record<string, { name: string, qty: number, unit: string }> = {};
+    augmentedUsages.forEach(u => {
+      if (u.stock) {
+        const unit = u.stock.type === 'ink' ? 'kg' : u.stock.type === 'plate' ? 'units' : 'sheets';
+        if (!usageCounts[u.stock.id]) {
+          usageCounts[u.stock.id] = { name: u.stock.name, qty: 0, unit };
+        }
+        usageCounts[u.stock.id].qty += u.totalQty;
+      }
+    });
+    let topUsedItem = 'N/A';
+    let maxUsageQty = 0;
+    let topUnit = '';
+    Object.entries(usageCounts).forEach(([id, data]) => {
+      if (data.qty > maxUsageQty) {
+        maxUsageQty = data.qty;
+        topUsedItem = data.name;
+        topUnit = data.unit;
+      }
+    });
+
+    const exportCSV = () => {
+      const headers = ['Date', 'Stock Name', 'Stock Type', 'Quantity Used', 'Standard Unit Rate', 'Estimated Value', 'Notes'];
+      const csvRows = [headers.join(',')];
+
+      sortedUsages.forEach(u => {
+        const dateStr = format(u.date, 'yyyy-MM-dd HH:mm');
+        const name = `"${(u.stock?.name || 'Deleted Stock').replace(/"/g, '""')}"`;
+        const type = u.stock?.type ? u.stock.type.toUpperCase() : 'UNKNOWN';
+        const qty = u.totalQty;
+        const rate = u.unitRate.toFixed(2);
+        const val = u.estimatedValue.toFixed(2);
+        const notes = `"${(u.notes || '').replace(/"/g, '""')}"`;
+
+        csvRows.push([dateStr, name, type, qty, rate, val, notes].join(','));
+      });
+
+      const csvContent = "data:text/csv;charset=utf-8," + csvRows.join("\n");
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `usage_summary_export_${Date.now()}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    };
+
+    return (
+      <div className="p-4 md:p-6 space-y-6 bg-white rounded-3xl border border-gray-100 shadow-sm animate-fade-in">
+        {/* Statistics Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="p-5 bg-gradient-to-br from-purple-50/60 to-purple-100/30 rounded-2xl border border-purple-100/50 flex items-center gap-4">
+            <div className="p-3 bg-purple-500/10 text-purple-700 rounded-xl">
+              <IndianRupee className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-xs uppercase font-bold tracking-wider text-purple-800">Consumption Value</p>
+              <p className="text-2xl font-bold text-purple-950 font-mono mt-0.5">₹{totalConsumptionValue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</p>
+              <p className="text-[10px] text-purple-700 font-sans">Total estimated material value</p>
+            </div>
+          </div>
+
+          <div className="p-5 bg-gradient-to-br from-blue-50/60 to-blue-100/30 rounded-2xl border border-blue-100/50 flex items-center gap-4">
+            <div className="p-3 bg-blue-500/10 text-blue-700 rounded-xl">
+              <History className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-xs uppercase font-bold tracking-wider text-blue-800">Usage Logs</p>
+              <p className="text-2xl font-bold text-blue-950 font-mono mt-0.5">{totalTransactionsCount}</p>
+              <p className="text-[10px] text-blue-700 font-sans">Recorded usage activities</p>
+            </div>
+          </div>
+
+          <div className="p-5 bg-gradient-to-br from-amber-50/60 to-amber-100/30 rounded-2xl border border-amber-100/50 flex items-center gap-4">
+            <div className="p-3 bg-amber-500/10 text-amber-700 rounded-xl">
+              <Package className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-xs uppercase font-bold tracking-wider text-amber-800">Most Used Item</p>
+              <p className="text-base font-bold text-amber-950 truncate max-w-[150px] mt-1" title={topUsedItem}>{topUsedItem}</p>
+              <p className="text-[10px] text-amber-400 font-sans font-mono whitespace-nowrap">
+                {maxUsageQty > 0 ? `${maxUsageQty.toLocaleString()} ${topUnit} used` : 'No logs yet'}
+              </p>
+            </div>
+          </div>
+
+          <div className="p-5 bg-gradient-to-br from-gray-50 to-gray-100/50 rounded-2xl border border-gray-200/60 flex items-center gap-4">
+            <div className="p-3 bg-gray-500/10 text-gray-700 rounded-xl">
+              <ArrowRight className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-xs uppercase font-bold tracking-wider text-gray-600">Latest Usage</p>
+              {augmentedUsages.length > 0 ? (
+                <>
+                  <p className="text-sm font-bold text-gray-900 truncate max-w-[150px] mt-1" title={augmentedUsages[0].stock?.name}>
+                    {augmentedUsages[0].stock?.name || 'Deleted Stock'}
+                  </p>
+                  <p className="text-[10px] text-gray-400 font-sans">
+                    {format(augmentedUsages[0].date, 'MMM dd, yyyy')}
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm font-bold text-gray-400 mt-1">No logs</p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Expenses Category Breakdown */}
+        {totalConsumptionValue > 0 && (
+          <div className="p-4 bg-gray-50/50 border border-gray-100 rounded-2xl">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">Estimated Material Value Consumed Breakdown</h4>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              {[
+                { label: 'Paper', val: typeBreakdown.paper, color: 'bg-blue-500' },
+                { label: 'Board', val: typeBreakdown.board, color: 'bg-amber-500' },
+                { label: 'Ink', val: typeBreakdown.ink, color: 'bg-purple-500' },
+                { label: 'Plates', val: typeBreakdown.plate, color: 'bg-emerald-500' },
+              ].map(item => {
+                const percentage = totalConsumptionValue > 0 ? (item.val / totalConsumptionValue) * 100 : 0;
+                return (
+                  <div key={item.label} className="space-y-1">
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-gray-650 font-medium">{item.label}</span>
+                      <span className="font-mono text-gray-900 font-semibold font-mono">₹{item.val.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                    </div>
+                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div className={`h-full ${item.color} rounded-full`} style={{ width: `${percentage}%` }}></div>
+                    </div>
+                    <p className="text-[10px] text-gray-400 font-mono text-right">{percentage.toFixed(1)}%</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Filters and Search Bar */}
+        <div className="border-t border-gray-100 pt-6">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex flex-col sm:flex-row gap-3 flex-1">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Input 
+                  placeholder="Search usage history by stock name or notes..." 
+                  className="pl-10 bg-white border-gray-200 rounded-full h-10 md:h-11 text-xs md:text-sm"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="inline-flex bg-gray-100 p-0.5 rounded-lg text-xs">
+                  {[
+                    { value: 'all', label: 'All Items' },
+                    { value: 'paper', label: 'Paper' },
+                    { value: 'board', label: 'Board' },
+                    { value: 'ink', label: 'Ink' },
+                    { value: 'plate', label: 'Plates' }
+                  ].map(tab => (
+                    <button
+                      key={tab.value}
+                      type="button"
+                      onClick={() => setTypeFilter(tab.value as any)}
+                      className={`px-3 py-1.5 rounded-md transition-colors ${typeFilter === tab.value ? 'bg-white font-medium text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value as any)}
+                className="bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-600 font-medium focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+              >
+                <option value="date-desc">Newest Usages</option>
+                <option value="date-asc">Oldest Usages</option>
+                <option value="qty-desc">Highest Quantity</option>
+                <option value="qty-asc">Lowest Quantity</option>
+                <option value="value-desc">Highest Value</option>
+                <option value="value-asc">Lowest Value</option>
+              </select>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={exportCSV}
+                className="rounded-full border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-xs h-9 font-sans flex items-center gap-1.5 px-4"
+                disabled={sortedUsages.length === 0}
+              >
+                <Download size={13} />
+                <span>Export CSV</span>
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {/* Usage Items List Table */}
+        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader className="bg-gray-50/50">
+                <TableRow className="border-gray-100 hover:bg-transparent">
+                  <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider pl-4 md:pl-6 w-[120px]">Date</TableHead>
+                  <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider">Item Details</TableHead>
+                  <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right">Quantity Consumed</TableHead>
+                  <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right">Standard Rate</TableHead>
+                  <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right">Estimated Value</TableHead>
+                  <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right pr-4 md:pr-6 whitespace-nowrap">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sortedUsages.map(u => (
+                  <TableRow key={u.id} className="group border-gray-50 hover:bg-gray-50/40 transition-colors">
+                    <TableCell className="pl-4 md:pl-6 text-xs text-gray-400 font-mono">
+                      {format(u.date, 'dd-MM-yyyy')}<br />
+                      <span className="text-[10px] text-gray-300">{format(u.date, 'HH:mm')}</span>
+                    </TableCell>
+                    
+                    <TableCell>
+                      <div className="flex flex-col">
+                        <span className="font-semibold text-gray-800 text-sm">{u.stock?.name || 'Deleted Stock'}</span>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <Badge variant="outline" className={`text-[9px] font-sans font-normal py-0 px-1.5 bg-opacity-30 ${
+                            u.stock?.type === 'paper' ? 'bg-blue-50 text-blue-600 border-blue-100' : 
+                            u.stock?.type === 'board' ? 'bg-amber-50 text-amber-600 border-amber-100' :
+                            u.stock?.type === 'ink' ? 'bg-purple-50 text-purple-600 border-purple-100' :
+                            'bg-emerald-50 text-emerald-600 border-emerald-100'
+                          }`}>
+                            {(u.stock?.type || 'Other').toUpperCase()}
+                          </Badge>
+                          {u.notes && (
+                            <span className="text-[10px] text-gray-400 italic max-w-xs md:max-w-md truncate" title={u.notes}>
+                              {u.notes}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </TableCell>
+
+                    <TableCell className="text-right font-mono font-medium text-xs md:text-sm text-gray-700">
+                      {u.totalQty.toLocaleString()} {u.stock?.type === 'ink' ? 'kg' : u.stock?.type === 'plate' ? 'units' : 'sheets'}
+                    </TableCell>
+
+                    <TableCell className="text-right font-mono text-xs md:text-sm text-gray-600">
+                      {u.unitRate > 0 ? `₹${u.unitRate.toFixed(2)}` : '—'}
+                    </TableCell>
+
+                    <TableCell className="text-right pr-4 font-mono font-bold text-xs md:text-sm text-purple-650">
+                      ₹{u.estimatedValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </TableCell>
+
+                    <TableCell className="text-right pr-4 md:pr-6 whitespace-nowrap">
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full"
+                        onClick={() => setUsageToDelete(u)}
+                        title="Revert & Delete Usage Log"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                
+                {sortedUsages.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="h-28 text-center text-gray-400 italic font-serif text-sm">
+                      No usage entries match your current search/filter.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          {sortedUsages.length > 0 && (
+            <div className="p-4 bg-gray-50/50 border-t border-gray-100 flex justify-between items-center text-xs md:text-sm text-gray-600 font-medium">
+              <span>Showing {filteredTransactionsCount} of {totalTransactionsCount} usage logs</span>
+              <span>Filtered Value Consumed: <strong className="font-mono text-purple-650 font-bold text-sm md:text-base">₹{filteredConsumptionValue.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</strong></span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const StockHistoryTable = ({ items, type }: { items: StockHistory[], type: StockType }) => {
     const [historyFilter, setHistoryFilter] = React.useState<'all' | 'purchase' | 'usage'>('all');
 
@@ -1574,10 +2058,12 @@ export function StockManagement() {
                   />
                 </div>
 
-                {formData.type === 'paper' && (
+                {(formData.type === 'paper' || formData.type === 'board') && (
                   <div className="space-y-4">
                     <div className="flex justify-between items-center">
-                      <Label htmlFor="paperTypeSelect" className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">Paper Group / Type</Label>
+                      <Label htmlFor="paperTypeSelect" className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">
+                        {formData.type === 'paper' ? 'Paper Group / Type' : 'Board Group / Type'}
+                      </Label>
                       <button
                         type="button"
                         onClick={() => setIsAddingNewSectInline(!isAddingNewSectInline)}
@@ -1602,12 +2088,14 @@ export function StockManagement() {
                             if (!newSectInlineName.trim()) return;
                             try {
                               const sectName = newSectInlineName.trim();
-                              const isExisting = paperSections.some(s => s.name.toLowerCase() === sectName.toLowerCase());
+                              const sectCollection = formData.type === 'paper' ? 'paperSections' : 'boardSections';
+                              const sectsList = formData.type === 'paper' ? paperSections : boardSections;
+                              const isExisting = sectsList.some(s => s.name.toLowerCase() === sectName.toLowerCase());
                               if (isExisting) {
                                 toast.error('This section already exists.');
                                 return;
                               }
-                              await addDoc(collection(db, 'paperSections'), {
+                              await addDoc(collection(db, sectCollection), {
                                 name: sectName,
                                 createdAt: Date.now()
                               });
@@ -1634,8 +2122,10 @@ export function StockManagement() {
                           onChange={e => setFormData({...formData, paperType: e.target.value})}
                           required
                         >
-                          <option value="" disabled>-- Select Paper Type --</option>
-                          {availablePaperSections.map(sect => (
+                          <option value="" disabled>
+                            {formData.type === 'paper' ? '-- Select Paper Type --' : '-- Select Board Type --'}
+                          </option>
+                          {(formData.type === 'paper' ? availablePaperSections : availableBoardSections).map(sect => (
                             <option key={sect} value={sect}>{sect}</option>
                           ))}
                         </select>
@@ -1738,16 +2228,17 @@ export function StockManagement() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="bg-gray-100 p-1 rounded-full mb-6 w-full max-w-2xl overflow-x-auto no-scrollbar flex-nowrap h-12">
+        <TabsList className="bg-gray-100 p-1 rounded-full mb-6 w-full max-w-3xl overflow-x-auto no-scrollbar flex-nowrap h-12">
           <TabsTrigger value="paper" className="rounded-full px-4 md:px-8 flex-1 text-xs md:text-sm">Paper</TabsTrigger>
           <TabsTrigger value="board" className="rounded-full px-4 md:px-8 flex-1 text-xs md:text-sm">Board</TabsTrigger>
           <TabsTrigger value="ink" className="rounded-full px-4 md:px-8 flex-1 text-xs md:text-sm">Ink</TabsTrigger>
           <TabsTrigger value="plate" className="rounded-full px-4 md:px-8 flex-1 text-xs md:text-sm">Plates</TabsTrigger>
           <TabsTrigger value="purchase_summary" className="rounded-full px-4 md:px-8 flex-1 text-xs md:text-sm">Purchase Summary</TabsTrigger>
+          <TabsTrigger value="usage_summary" className="rounded-full px-4 md:px-8 flex-1 text-xs md:text-sm">Usage Summary</TabsTrigger>
         </TabsList>
 
-        <Card className={activeTab === 'purchase_summary' ? 'border-none bg-transparent shadow-none' : 'border-none shadow-sm bg-white rounded-[20px] md:rounded-[24px] overflow-hidden'}>
-          {activeTab !== 'purchase_summary' && (
+        <Card className={(activeTab === 'purchase_summary' || activeTab === 'usage_summary') ? 'border-none bg-transparent shadow-none' : 'border-none shadow-sm bg-white rounded-[20px] md:rounded-[24px] overflow-hidden'}>
+          {activeTab !== 'purchase_summary' && activeTab !== 'usage_summary' && (
             <CardHeader className="p-4 md:p-6 border-b border-gray-100 bg-gray-50/50">
               <div className="flex items-center gap-4">
                 <div className="relative flex-1">
@@ -1825,11 +2316,65 @@ export function StockManagement() {
               />
             </TabsContent>
             <TabsContent value="board" className="mt-0">
+              {/* Board Sub-Categories Navigation */}
+              <div className="px-4 md:px-6 py-3 bg-gray-50/50 border-b border-gray-100 flex flex-wrap gap-2 items-center">
+                <span className="text-xs font-bold font-serif italic text-gray-400 uppercase tracking-wider mr-2">Board Sections:</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedBoardType('all')}
+                  className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all duration-200 ${
+                    selectedBoardType === 'all'
+                      ? 'bg-[#5A5A40] text-white shadow-sm scale-102'
+                      : 'bg-white border border-gray-200 text-gray-600 hover:text-gray-900 hover:border-gray-300'
+                  }`}
+                >
+                  All Boards
+                </button>
+
+                {availableBoardSections.map(sect => {
+                  const isActive = selectedBoardType === sect;
+                  return (
+                    <button
+                      key={sect}
+                      type="button"
+                      onClick={() => setSelectedBoardType(sect)}
+                      className={`px-4 py-1.5 rounded-full text-xs font-semibold transition-all duration-200 ${
+                        isActive 
+                          ? 'bg-[#5A5A40] text-white shadow-sm scale-102' 
+                          : 'bg-white border border-gray-200 text-gray-600 hover:text-gray-900 hover:border-gray-300'
+                      }`}
+                    >
+                      {sect}
+                    </button>
+                  );
+                })}
+
+                <button
+                  type="button"
+                  onClick={() => setIsManageBoardSectionsOpen(true)}
+                  className="px-3 py-1 text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200 rounded-full flex items-center hover:bg-amber-100 md:ml-auto transition-colors"
+                >
+                  Manage Sections
+                </button>
+              </div>
+
               <StockTable 
-                items={filteredStocks.filter(s => s.type === 'board')} 
+                items={filteredStocks.filter(s => {
+                  if (s.type !== 'board') return false;
+                  if (selectedBoardType === 'all') return true;
+                  return s.paperType === selectedBoardType;
+                })} 
                 type="board" 
               />
-              <StockHistoryTable items={stockHistory} type="board" />
+              <StockHistoryTable 
+                items={stockHistory.filter(h => {
+                  const stock = stocks.find(s => s.id === h.stockId);
+                  if (!stock || stock.type !== 'board') return false;
+                  if (selectedBoardType === 'all') return true;
+                  return stock.paperType === selectedBoardType;
+                })}
+                type="board" 
+              />
             </TabsContent>
             <TabsContent value="ink" className="mt-0">
               <StockTable 
@@ -1848,6 +2393,9 @@ export function StockManagement() {
             <TabsContent value="purchase_summary" className="mt-0">
               <PurchaseSummaryView />
             </TabsContent>
+            <TabsContent value="usage_summary" className="mt-0">
+              <UsageSummaryView />
+            </TabsContent>
           </CardContent>
         </Card>
       </Tabs>
@@ -1856,48 +2404,110 @@ export function StockManagement() {
       <Dialog open={isUsageOpen} onOpenChange={setIsUsageOpen}>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
-            <DialogTitle>Record Ink Usage</DialogTitle>
+            <DialogTitle>Record {selectedInk?.type ? selectedInk.type.charAt(0).toUpperCase() + selectedInk.type.slice(1) : 'Stock'} Usage</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleRecordUsage} className="space-y-4 py-4">
             <div className="p-4 bg-purple-50 rounded-2xl border border-purple-100 mb-4">
               <p className="text-sm font-medium text-purple-900">Recording usage for:</p>
               <p className="text-lg font-serif text-purple-700">{selectedInk?.name}</p>
-              <div className="mt-2 flex gap-2 flex-wrap">
-                {selectedInk?.inkContainers?.map((c, i) => (
-                  <Badge key={i} variant="outline" className="bg-white border-purple-200 text-purple-600">
-                    {c.count}x {c.weight}kg
-                  </Badge>
-                ))}
-              </div>
+              {selectedInk?.type === 'ink' && selectedInk?.inkContainers && (
+                <div className="mt-2 flex gap-2 flex-wrap">
+                  {selectedInk.inkContainers.map((c, i) => (
+                    <Badge key={i} variant="outline" className="bg-white border-purple-200 text-purple-600">
+                      {c.count}x {c.weight}kg
+                    </Badge>
+                  ))}
+                </div>
+              )}
+              {selectedInk?.type !== 'ink' && (
+                <p className="text-xs text-purple-600 mt-1.5 font-medium">
+                  Current Stock: <span className="font-mono font-bold text-sm text-purple-950">{selectedInk?.quantity.toLocaleString()} {selectedInk?.type === 'plate' ? 'units' : 'sheets'}</span>
+                </p>
+              )}
             </div>
             
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Container Weight</Label>
-                <Select value={usageFormData.weight} onValueChange={v => setUsageFormData({...usageFormData, weight: v})}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select weight" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {selectedInk?.inkContainers?.map((c, i) => (
-                      <SelectItem key={i} value={c.weight.toString()} disabled={c.count <= 0}>
-                        {c.weight}kg ({c.count} left)
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            {selectedInk?.type === 'ink' ? (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Container Weight</Label>
+                  <Select value={usageFormData.weight} onValueChange={v => setUsageFormData({...usageFormData, weight: v})}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select weight" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {selectedInk?.inkContainers?.map((c, i) => (
+                        <SelectItem key={i} value={c.weight.toString()} disabled={c.count <= 0}>
+                          {c.weight}kg ({c.count} left)
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Number of Containers</Label>
+                  <Input 
+                    type="number" 
+                    value={usageFormData.count} 
+                    onChange={e => setUsageFormData({...usageFormData, count: e.target.value})} 
+                    required 
+                    min="1"
+                  />
+                </div>
               </div>
+            ) : (
               <div className="space-y-2">
-                <Label>Number of Containers</Label>
+                <Label>Usage Quantity ({selectedInk?.type === 'plate' ? 'units' : 'sheets'})</Label>
                 <Input 
                   type="number" 
-                  value={usageFormData.count} 
-                  onChange={e => setUsageFormData({...usageFormData, count: e.target.value})} 
+                  value={usageFormData.quantity} 
+                  onChange={e => setUsageFormData({...usageFormData, quantity: e.target.value})} 
+                  placeholder={`Enter quantity of ${selectedInk?.type === 'plate' ? 'plates' : 'sheets'} used...`}
                   required 
                   min="1"
                 />
               </div>
-            </div>
+            )}
+
+            {/* Usage summary badge */}
+            {(() => {
+              if (!selectedInk) return null;
+              if (selectedInk.type === 'ink') {
+                const uWeight = Number(usageFormData.weight || 0);
+                const uCount = Number(usageFormData.count || 0);
+                
+                if (uWeight > 0 && uCount > 0) {
+                  const totalDeductKg = uWeight * uCount;
+                  const approxValue = totalDeductKg * (selectedInk.defaultRate || 0);
+                  return (
+                    <div className="p-3 bg-purple-50/85 border border-purple-200/55 rounded-2xl text-[11px] space-y-1 text-purple-900 font-medium font-mono">
+                      <p className="font-serif font-bold text-purple-950">Ink usage summary:</p>
+                      <p>Total Deducting: <span className="font-bold underline text-xs text-red-600">{totalDeductKg.toFixed(2)} kg</span> ({uCount} containers × {uWeight} kg)</p>
+                      {selectedInk.defaultRate ? (
+                        <p>Estimated Material Value: <span className="font-bold">₹{approxValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> (at ₹{selectedInk.defaultRate.toFixed(2)}/kg)</p>
+                      ) : null}
+                    </div>
+                  );
+                }
+              } else {
+                const uQty = Number(usageFormData.quantity || 0);
+                if (uQty > 0) {
+                  const unitLabel = selectedInk.type === 'plate' ? 'units' : 'sheets';
+                  const rateSuffix = selectedInk.type === 'plate' ? '/unit' : '/sheet';
+                  const approxValue = uQty * (selectedInk.defaultRate || 0);
+                  return (
+                    <div className="p-3 bg-purple-50/85 border border-purple-200/55 rounded-2xl text-[11px] space-y-1 text-purple-900 font-medium font-mono">
+                      <p className="font-serif font-bold text-purple-950">{selectedInk.type.charAt(0).toUpperCase() + selectedInk.type.slice(1)} usage summary:</p>
+                      <p>Total Deducting: <span className="font-bold underline text-xs text-red-600">{uQty.toLocaleString()} {unitLabel}</span></p>
+                      {selectedInk.defaultRate ? (
+                        <p>Estimated Material Value: <span className="font-bold">₹{approxValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> (at ₹{selectedInk.defaultRate.toFixed(2)}{rateSuffix})</p>
+                      ) : null}
+                    </div>
+                  );
+                }
+              }
+              return null;
+            })()}
+
             <div className="space-y-2">
               <Label>Notes (Optional)</Label>
               <Input 
@@ -1997,6 +2607,90 @@ export function StockManagement() {
         </DialogContent>
       </Dialog>
 
+      {/* Manage Board Sections Dialog */}
+      <Dialog open={isManageBoardSectionsOpen} onOpenChange={setIsManageBoardSectionsOpen}>
+        <DialogContent className="sm:max-w-[425px] rounded-[32px]">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-2xl flex items-center gap-2 text-gray-900">
+              <Package className="h-5 w-5 text-[#5A5A40]" />
+              Manage Board Sections
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6 py-4">
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              if (!newBoardSectionName.trim()) return;
+              try {
+                const sectName = newBoardSectionName.trim();
+                const isExisting = boardSections.some(s => s.name.toLowerCase() === sectName.toLowerCase());
+                if (isExisting) {
+                  toast.error('This section already exists.');
+                  return;
+                }
+                await addDoc(collection(db, 'boardSections'), {
+                  name: sectName,
+                  createdAt: Date.now()
+                });
+                toast.success(`Section "${sectName}" created successfully`);
+                setNewBoardSectionName('');
+              } catch (error) {
+                console.error(error);
+                toast.error('Failed to create section');
+              }
+            }} className="space-y-2">
+              <Label htmlFor="newBoardSectionInput" className="text-xs uppercase tracking-widest text-gray-500 font-bold block mb-1">Create New Section</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="newBoardSectionInput"
+                  placeholder="e.g. Duplex Board, Folding Box Board, Kraft"
+                  value={newBoardSectionName}
+                  onChange={(e) => setNewBoardSectionName(e.target.value)}
+                  className="rounded-xl border-gray-200 h-11 flex-1"
+                  required
+                />
+                <Button type="submit" className="bg-[#5A5A40] hover:bg-[#4A4A30] text-white rounded-xl px-4 h-11 shrink-0">
+                  Add Section
+                </Button>
+              </div>
+            </form>
+
+            <div className="space-y-3">
+              <h3 className="text-xs uppercase tracking-widest text-gray-500 font-bold border-b border-gray-100 pb-2">Active Sections</h3>
+              <div className="max-h-[220px] overflow-y-auto divide-y divide-gray-50 pr-1">
+                {boardSections.map((sect) => (
+                  <div key={sect.id} className="flex justify-between items-center py-2.5">
+                    <span className="text-sm text-gray-800 font-medium">{sect.name}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-full"
+                      onClick={async () => {
+                        try {
+                          await deleteDoc(doc(db, 'boardSections', sect.id));
+                          toast.success(`Section "${sect.name}" removed successfully`);
+                        } catch (error) {
+                          console.error(error);
+                          toast.error('Failed to remove section');
+                        }
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+                {boardSections.length === 0 && (
+                  <p className="text-center text-xs text-gray-400 italic py-4">No custom sections created yet.</p>
+                )}
+              </div>
+            </div>
+
+            <p className="text-[10px] text-gray-400 italic leading-snug bg-gray-50 p-2.5 rounded-xl">
+              💡 Note: Any categories configured on existing board stock items will always show up under "Board Sections" even if they are not explicitly listed in Custom Sections.
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {stockToDelete && (
         <Dialog open={!!stockToDelete} onOpenChange={() => setStockToDelete(null)}>
           <DialogContent className="sm:max-w-[425px] rounded-[32px]">
@@ -2081,6 +2775,69 @@ export function StockManagement() {
         </Dialog>
       )}
 
+      {usageToDelete && (
+        <Dialog open={!!usageToDelete} onOpenChange={() => setUsageToDelete(null)}>
+          <DialogContent className="sm:max-w-[425px] rounded-[32px]">
+            <DialogHeader>
+              <DialogTitle className="font-serif text-2xl text-red-650 flex items-center gap-2">
+                <Trash className="h-5 w-5 text-red-500" />
+                Revert & Delete Usage Log
+              </DialogTitle>
+            </DialogHeader>
+            <div className="py-4 space-y-4 text-xs md:text-sm text-gray-650">
+              <p>
+                Are you sure you want to delete this usage record? 
+                This will permanently delete the usage log and automatically add the consumed quantity back to the stock.
+              </p>
+              
+              {(() => {
+                const stock = stocks.find(s => s.id === usageToDelete.stockId);
+                const currentQty = stock?.quantity ?? 0;
+                const usedQty = Math.abs(usageToDelete.quantity);
+                const finalQty = currentQty + usedQty;
+                const unit = stock?.type === 'ink' ? 'kg' : stock?.type === 'plate' ? 'units' : 'sheets';
+                
+                return (
+                  <div className="p-4 bg-red-50/50 border border-red-100 rounded-2xl space-y-2">
+                    <div className="flex justify-between">
+                      <span className="font-medium text-gray-700">Item Name:</span>
+                      <span className="font-semibold text-gray-950">{stock?.name || 'Deleted Stock'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-medium text-gray-700">Quantity Consumed:</span>
+                      <span className="font-mono text-gray-950">{usedQty.toLocaleString()} {unit}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-medium text-gray-700">Current Stock:</span>
+                      <span className="font-mono text-gray-950">{currentQty.toLocaleString()} {unit}</span>
+                    </div>
+                    <div className="border-t border-red-100 pt-2 flex justify-between">
+                      <span className="font-medium text-purple-700">Adjusted Restored Stock:</span>
+                      <span className="font-mono font-bold text-gray-950">
+                        {finalQty.toLocaleString()} {unit}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="ghost" onClick={() => setUsageToDelete(null)} className="rounded-full" disabled={isDeletingUsage}>
+                Cancel
+              </Button>
+              <Button 
+                variant="destructive" 
+                onClick={handleDeleteUsage} 
+                className="rounded-full px-8 bg-red-600 hover:bg-red-700 text-white"
+                disabled={isDeletingUsage}
+              >
+                {isDeletingUsage ? 'Processing...' : 'Revert & Delete'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
       {editingStock && (
         <Dialog open={!!editingStock} onOpenChange={() => setEditingStock(null)}>
           <DialogContent className="sm:max-w-[425px] rounded-[32px]">
@@ -2094,10 +2851,12 @@ export function StockManagement() {
                   <Input id="edit-name" className="rounded-xl border-gray-200 h-12" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
                 </div>
 
-                 {formData.type === 'paper' && (
+                {(formData.type === 'paper' || formData.type === 'board') && (
                   <div className="space-y-4">
                     <div className="flex justify-between items-center">
-                      <Label htmlFor="edit-paperTypeSelect" className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">Paper Group / Type</Label>
+                      <Label htmlFor="edit-paperTypeSelect" className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">
+                        {formData.type === 'paper' ? 'Paper Group / Type' : 'Board Group / Type'}
+                      </Label>
                       <button
                         type="button"
                         onClick={() => setIsAddingNewSectInline(!isAddingNewSectInline)}
@@ -2122,12 +2881,14 @@ export function StockManagement() {
                             if (!newSectInlineName.trim()) return;
                             try {
                               const sectName = newSectInlineName.trim();
-                              const isExisting = paperSections.some(s => s.name.toLowerCase() === sectName.toLowerCase());
+                              const sectCollection = formData.type === 'paper' ? 'paperSections' : 'boardSections';
+                              const sectsList = formData.type === 'paper' ? paperSections : boardSections;
+                              const isExisting = sectsList.some(s => s.name.toLowerCase() === sectName.toLowerCase());
                               if (isExisting) {
                                 toast.error('This section already exists.');
                                 return;
                               }
-                              await addDoc(collection(db, 'paperSections'), {
+                              await addDoc(collection(db, sectCollection), {
                                 name: sectName,
                                 createdAt: Date.now()
                               });
@@ -2154,8 +2915,10 @@ export function StockManagement() {
                           onChange={e => setFormData({...formData, paperType: e.target.value})}
                           required
                         >
-                          <option value="" disabled>-- Select Paper Type --</option>
-                          {availablePaperSections.map(sect => (
+                          <option value="" disabled>
+                            {formData.type === 'paper' ? '-- Select Paper Type --' : '-- Select Board Type --'}
+                          </option>
+                          {(formData.type === 'paper' ? availablePaperSections : availableBoardSections).map(sect => (
                             <option key={sect} value={sect}>{sect}</option>
                           ))}
                         </select>

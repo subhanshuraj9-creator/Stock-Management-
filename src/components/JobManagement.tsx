@@ -9,9 +9,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from './ui/dialog';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { Plus, Search, FileText, Calendar, User, ChevronRight, Edit2, Trash2, Truck, Inbox, CheckCircle2, PackageCheck, Download } from 'lucide-react';
+import { Plus, Search, FileText, Calendar, User, ChevronRight, Edit2, Trash2, Truck, Inbox, CheckCircle2, PackageCheck, Download, Eye, Image as ImageIcon, Printer } from 'lucide-react';
 import { Badge } from './ui/badge';
 import { InvoiceModal } from './InvoiceModal';
+import { JobPreviewModal } from './JobPreviewModal';
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -98,11 +99,10 @@ const StockSelect = ({
 };
 
 const getInitialProcessCharges = () => [
+  { id: 'printing', name: 'Printing', amount: 0, notes: '' },
   { id: 'cutting', name: 'Cutting', amount: 0, notes: '' },
   { id: 'folding', name: 'Folding', amount: 0, notes: '' },
-  { id: 'binding', name: 'Binding', amount: 0, notes: '' },
-  { id: 'lamination', name: 'Lamination', amount: 0, notes: '' },
-  { id: 'uv', name: 'UV Coating', amount: 0, notes: '' }
+  { id: 'binding', name: 'Binding', amount: 0, notes: '' }
 ];
 
 const loadProcessChargesForEditing = (job: Job) => {
@@ -129,6 +129,7 @@ export function JobManagement() {
   const [editingJob, setEditingJob] = useState<Job | null>(null);
   const [jobToDelete, setJobToDelete] = useState<Job | null>(null);
   const [invoiceJob, setInvoiceJob] = useState<Job | null>(null);
+  const [previewJob, setPreviewJob] = useState<Job | null>(null);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
 
@@ -426,11 +427,9 @@ export function JobManagement() {
   };
 
   const handleAddPlate = () => {
-    const isJoint = !!(formData as any).isJoint;
-    const jointRef = (formData as any).jointRef || '';
     setFormData({
       ...formData,
-      platesUsed: [...formData.platesUsed, { plateId: '', count: 0, isJoint: isJoint, plateRef: jointRef, rate: 0 }]
+      platesUsed: [...formData.platesUsed, { plateId: '', count: 0, isJoint: false, plateRef: '', rate: 0 }]
     });
   };
 
@@ -480,7 +479,7 @@ export function JobManagement() {
   };
 
   const handleRemoveProcessCharge = (id: string) => {
-    const standardIds = ['cutting', 'folding', 'binding', 'lamination', 'uv'];
+    const standardIds = ['printing', 'cutting', 'folding', 'binding'];
     if (standardIds.includes(id)) {
       setFormData({
         ...formData,
@@ -1445,11 +1444,9 @@ export function JobManagement() {
               <div className="space-y-4 pt-4 border-t border-gray-100">
                 <div className="flex justify-between items-center">
                   <Label className="text-lg font-serif">Plates Used</Label>
-                  {!formData.isJoint && (
-                    <Button type="button" variant="outline" size="sm" onClick={handleAddPlate} className="rounded-full">
-                      <Plus className="mr-1 h-3 w-3" /> Add Plate
-                    </Button>
-                  )}
+                  <Button type="button" variant="outline" size="sm" onClick={handleAddPlate} className="rounded-full">
+                    <Plus className="mr-1 h-3 w-3" /> {formData.isJoint ? 'Add Additional Plate' : 'Add Plate'}
+                  </Button>
                 </div>
                 
                 {formData.platesUsed.map((plate, index) => (
@@ -1473,7 +1470,7 @@ export function JobManagement() {
                           value={plate.count === 0 ? '' : plate.count} 
                           onChange={e => handlePlateChange(index, 'count', e.target.value === '' ? 0 : Number(e.target.value))} 
                           onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                          required={!formData.isJoint} 
+                          required={!plate.isJoint} 
                           className="bg-white"
                           disabled={!!plate.isJoint}
                         />
@@ -1487,7 +1484,7 @@ export function JobManagement() {
                           value={plate.rate === 0 ? '' : plate.rate} 
                           onChange={e => handlePlateChange(index, 'rate', e.target.value === '' ? 0 : Number(e.target.value))} 
                           onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                          required={!formData.isJoint} 
+                          required={!plate.isJoint} 
                           className="bg-white"
                         />
                       </div>
@@ -1539,7 +1536,7 @@ export function JobManagement() {
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {formData.processCharges.map((pc) => {
-                    const isStandard = ['cutting', 'folding', 'binding', 'lamination', 'uv'].includes(pc.id);
+                    const isStandard = ['printing', 'cutting', 'folding', 'binding'].includes(pc.id);
                     return (
                       <div key={pc.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col gap-2 relative">
                         <div className="flex items-center justify-between gap-1.5">
@@ -1815,10 +1812,11 @@ export function JobManagement() {
                           const cleanRef = jobRef.trim().toUpperCase().replace('#', '');
                           const matchingParentJob = cleanRef ? jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef) : null;
                           
-                          let resolvedPlates = (job.platesUsed && job.platesUsed.length > 0) ? [...job.platesUsed] : [];
+                          const childPlates = (job.platesUsed && job.platesUsed.length > 0) ? [...job.platesUsed] : [];
+                          let resolvedPlates = [...childPlates];
                           
                           if (matchingParentJob && matchingParentJob.platesUsed && matchingParentJob.platesUsed.length > 0) {
-                            resolvedPlates = matchingParentJob.platesUsed.map(p => {
+                            const jointPlatesResolved = matchingParentJob.platesUsed.map(p => {
                               const stockDefault = stocks.find(s => s.id === p.plateId)?.defaultRate || 0;
                               return {
                                 ...p,
@@ -1827,6 +1825,11 @@ export function JobManagement() {
                                 plateRef: jobRef
                               };
                             });
+                            
+                            resolvedPlates = [
+                              ...childPlates.filter(p => !p.isJoint),
+                              ...jointPlatesResolved
+                            ];
                           }
                           
                           if (resolvedPlates.length === 0 && (job.isJoint || jobRef)) {
@@ -1883,6 +1886,14 @@ export function JobManagement() {
                         onClick={() => setInvoiceJob(job)}
                       >
                         <FileText size={14} className="mr-1" /> Invoice
+                      </Button>
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        className="h-8 text-xs md:text-sm text-amber-700 hover:text-amber-900 hover:bg-amber-50/50 font-semibold rounded-full flex items-center"
+                        onClick={() => setPreviewJob(job)}
+                      >
+                        <Printer size={14} className="mr-1" /> Print Preview
                       </Button>
                     </div>
                                    <div className="w-full mt-4 pt-4 border-t border-gray-100/60">
@@ -2023,11 +2034,15 @@ export function JobManagement() {
                                   })
                                 : [];
                               
+                              const isAdditional = (job.isJoint || (job.jointRef && job.jointRef.trim() !== '')) && !plate.isJoint && !plate.isJointRef;
+                              
                               return (
                                 <div key={`plate-${idx}`} className={`flex flex-col gap-1.5 p-2 md:p-3 rounded-xl border flex-1 min-w-[200px] ${
                                   isJoint 
                                     ? 'bg-amber-50/70 border-amber-200 text-amber-900' 
-                                    : 'bg-emerald-50 border-emerald-100 text-emerald-900'
+                                    : isAdditional
+                                      ? 'bg-pink-50/75 border-pink-100 text-pink-900 shadow-2xs'
+                                      : 'bg-emerald-50 border-emerald-100 text-emerald-900'
                                 }`}>
                                   <div className="flex justify-between items-center text-xs md:text-sm">
                                     <span className="font-medium truncate mr-2 flex items-center gap-1.5">
@@ -2037,8 +2052,13 @@ export function JobManagement() {
                                           Joint Job
                                         </Badge>
                                       )}
+                                      {isAdditional && (
+                                        <Badge className="bg-pink-500 hover:bg-pink-600 border-none text-white text-[9px] h-4 px-1 leading-none uppercase tracking-wider font-bold">
+                                          Additional Plate
+                                        </Badge>
+                                      )}
                                     </span>
-                                    <span className={`font-mono text-xs font-semibold whitespace-nowrap ${isJoint ? 'text-amber-700' : 'text-emerald-700'}`}>
+                                    <span className={`font-mono text-xs font-semibold whitespace-nowrap ${isJoint ? 'text-amber-700' : isAdditional ? 'text-pink-700' : 'text-emerald-700'}`}>
                                       {plate.count} {isJoint ? 'shared ' : ''}plates
                                     </span>
                                   </div>
@@ -2306,6 +2326,16 @@ export function JobManagement() {
         stocks={stocks} 
         jobs={jobs}
       />
+
+      {previewJob && (
+        <JobPreviewModal
+          isOpen={!!previewJob}
+          onClose={() => setPreviewJob(null)}
+          job={previewJob}
+          stocks={stocks}
+          jobs={jobs}
+        />
+      )}
 
       {editingJob && (
         <Dialog open={!!editingJob} onOpenChange={() => {
@@ -2710,11 +2740,9 @@ export function JobManagement() {
               <div className="space-y-4 pt-4 border-t border-gray-100">
                 <div className="flex justify-between items-center">
                   <Label className="text-lg font-serif">Plates Used</Label>
-                  {!formData.isJoint && (
-                    <Button type="button" variant="outline" size="sm" onClick={handleAddPlate} className="rounded-full">
-                      <Plus className="mr-1 h-3 w-3" /> Add Plate
-                    </Button>
-                  )}
+                  <Button type="button" variant="outline" size="sm" onClick={handleAddPlate} className="rounded-full">
+                    <Plus className="mr-1 h-3 w-3" /> {formData.isJoint ? 'Add Additional Plate' : 'Add Plate'}
+                  </Button>
                 </div>
                 
                 {formData.platesUsed.map((plate, index) => (
@@ -2738,7 +2766,7 @@ export function JobManagement() {
                           value={plate.count === 0 ? '' : plate.count} 
                           onChange={e => handlePlateChange(index, 'count', e.target.value === '' ? 0 : Number(e.target.value))} 
                           onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                          required={!formData.isJoint} 
+                          required={!plate.isJoint} 
                           className="bg-white"
                           disabled={!!plate.isJoint}
                         />
@@ -2752,7 +2780,7 @@ export function JobManagement() {
                           value={plate.rate === 0 ? '' : plate.rate} 
                           onChange={e => handlePlateChange(index, 'rate', e.target.value === '' ? 0 : Number(e.target.value))} 
                           onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                          required={!formData.isJoint} 
+                          required={!plate.isJoint} 
                           className="bg-white"
                         />
                       </div>
@@ -2804,7 +2832,7 @@ export function JobManagement() {
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {formData.processCharges.map((pc) => {
-                    const isStandard = ['cutting', 'folding', 'binding', 'lamination', 'uv'].includes(pc.id);
+                    const isStandard = ['printing', 'cutting', 'folding', 'binding'].includes(pc.id);
                     return (
                       <div key={pc.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col gap-2 relative">
                         <div className="flex items-center justify-between gap-1.5">

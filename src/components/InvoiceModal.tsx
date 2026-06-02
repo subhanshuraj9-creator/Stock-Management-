@@ -242,10 +242,12 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
     const plateRows = resolvedPlates.map(plate => {
       const stock = stocks.find(s => s.id === plate.plateId);
       const total = (plate.count || 0) * (plate.rate || 0);
+      const isAdditional = (job.isJoint || (job.jointRef && job.jointRef.trim() !== '')) && !plate.isJoint && !plate.isJointRef;
+      const displayName = isAdditional ? `${stock?.name || 'Printing Plate'} (Additional Plate)` : (stock?.name || 'Printing Plate');
       return `
         <tr>
           <td style="padding: 10px; border-bottom: 1px solid var(--border-color); font-size: 13px;">
-            ${stock?.name || 'Printing Plate'}
+            ${displayName}
           </td>
           <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace;">${plate.count}</td>
           <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace;">₹${(plate.rate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
@@ -572,10 +574,12 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
     const plateRows = resolvedPlates.map(plate => {
       const stock = stocks.find(s => s.id === plate.plateId);
       const total = (plate.count || 0) * (plate.rate || 0);
+      const isAdditional = (job.isJoint || (job.jointRef && job.jointRef.trim() !== '')) && !plate.isJoint && !plate.isJointRef;
+      const displayName = isAdditional ? `${stock?.name || 'Printing Plate'} (Additional Plate)` : (stock?.name || 'Printing Plate');
       return `
         <tr>
           <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; font-size: 13.5px; color:#2d3748;">
-            ${stock?.name || 'Printing Plate'}
+            ${displayName}
           </td>
           <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#4a5568;">${plate.count}</td>
           <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#4a5568;">₹${(plate.rate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
@@ -1024,74 +1028,28 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
               />
             </div>
             <div className="md:col-span-2 border-t border-amber-100 pt-4 mt-2">
-              <h5 className="text-xs font-serif font-bold text-amber-950 uppercase tracking-widest flex items-center gap-1.5 mb-3">
-                <FileText className="h-3.5 w-3.5 text-[#5A5A40]" /> PDF LAYOUT & STYLE CONFIGURATOR
-              </h5>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                <div className="space-y-1">
-                  <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900">Layout Theme / Font Pairing</Label>
-                  <select 
-                    value={layoutTheme} 
-                    onChange={e => updateLayoutSetting('pdf_layout_theme', e.target.value)}
-                    className="w-full bg-white border border-gray-200 text-xs rounded-lg h-9 px-2 outline-none focus:border-[#5A5A40]"
-                  >
-                    <option value="classic">Classic Pressman (Garamond & Georgia)</option>
-                    <option value="modern">Modern Digital (Sleek Inter Sans)</option>
-                    <option value="elegant">Editorial Grace (Luxury Serif)</option>
-                    <option value="compact">Compact Ledger (Fitted monospace)</option>
-                  </select>
-                </div>
+              <div className="flex flex-wrap gap-6 items-center bg-white/70 p-2.5 rounded-lg border border-amber-100/50">
+                <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900 mr-2">Toggle Footer Sections:</Label>
+                
+                <label className="flex items-center gap-2 text-xs font-medium text-gray-700 cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={showTerms} 
+                    onChange={e => updateLayoutSetting('pdf_show_terms', e.target.checked ? 'true' : 'false')}
+                    className="rounded border-gray-300 text-[#5A5A40] focus:ring-[#5A5A40]" 
+                  />
+                  Statement Explanatory Notes & Terms
+                </label>
 
-                <div className="space-y-1">
-                  <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900">Accent Color Palette</Label>
-                  <select 
-                    value={accentColor} 
-                    onChange={e => updateLayoutSetting('pdf_accent_color', e.target.value)}
-                    className="w-full bg-white border border-gray-200 text-xs rounded-lg h-9 px-2 outline-none focus:border-[#5A5A40]"
-                  >
-                    <option value="original">Sage Press (Original Olive Green)</option>
-                    <option value="blue">Ocean Sapphire (Deep Royal Blue)</option>
-                    <option value="green">Forest Emerald (Corporate Teal)</option>
-                    <option value="crimson">Royal Ruby (Bordeaux Red)</option>
-                    <option value="charcoal">Slate Obsidian (Classic Charcoal)</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900">Company Header Mode</Label>
-                  <select 
-                    value={headerMode} 
-                    onChange={e => updateLayoutSetting('pdf_header_mode', e.target.value)}
-                    className="w-full bg-white border border-gray-200 text-xs rounded-lg h-9 px-2 outline-none focus:border-[#5A5A40]"
-                  >
-                    <option value="full_header">Print Full Company Header</option>
-                    <option value="letterhead">Leave Space for Preprinted Letterhead</option>
-                  </select>
-                </div>
-
-                <div className="sm:col-span-2 md:col-span-3 flex flex-wrap gap-6 items-center bg-white/70 p-2.5 rounded-lg border border-amber-100/50 mt-1">
-                  <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900 mr-2">Toggle Footer Sections:</Label>
-                  
-                  <label className="flex items-center gap-2 text-xs font-medium text-gray-700 cursor-pointer">
-                    <input 
-                      type="checkbox" 
-                      checked={showTerms} 
-                      onChange={e => updateLayoutSetting('pdf_show_terms', e.target.checked ? 'true' : 'false')}
-                      className="rounded border-gray-300 text-[#5A5A40] focus:ring-[#5A5A40]" 
-                    />
-                    Statement Explanatory Notes & Terms
-                  </label>
-
-                  <label className="flex items-center gap-2 text-xs font-medium text-gray-700 cursor-pointer">
-                    <input 
-                      type="checkbox" 
-                      checked={showSignature} 
-                      onChange={e => updateLayoutSetting('pdf_show_signature', e.target.checked ? 'true' : 'false')}
-                      className="rounded border-gray-300 text-[#5A5A40] focus:ring-[#5A5A40]" 
-                    />
-                    Authorized Signatory Seal Slot
-                  </label>
-                </div>
+                <label className="flex items-center gap-2 text-xs font-medium text-gray-700 cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={showSignature} 
+                    onChange={e => updateLayoutSetting('pdf_show_signature', e.target.checked ? 'true' : 'false')}
+                    className="rounded border-gray-300 text-[#5A5A40] focus:ring-[#5A5A40]" 
+                  />
+                  Authorized Signatory Seal Slot
+                </label>
               </div>
             </div>
           </div>
@@ -1177,11 +1135,22 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                 {resolvedPlates.map((plate, idx) => {
                   const stock = stocks.find(s => s.id === plate.plateId);
                   const total = (plate.count || 0) * (plate.rate || 0);
+                  const isAdditional = (job.isJoint || (job.jointRef && job.jointRef.trim() !== '')) && !plate.isJoint && !plate.isJointRef;
                   return (
                     <div key={`pl-idx-${idx}`} className="flex justify-between items-start text-xs font-sans py-1 hover:bg-gray-50 rounded px-1">
                       <div>
-                        <span className="font-medium text-gray-800">
+                        <span className="font-medium text-gray-800 flex flex-wrap items-center gap-1.5">
                           {stock?.name || 'Printing Plate'} 
+                          {isAdditional && (
+                            <span className="text-[9px] font-bold bg-pink-100 text-pink-800 px-1.5 rounded-full uppercase leading-relaxed shrink-0">
+                              Additional Plate
+                            </span>
+                          )}
+                          {plate.isJointRef && (
+                            <span className="text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-200/50 px-1 rounded uppercase leading-relaxed shrink-0">
+                              Joint Plate
+                            </span>
+                          )}
                         </span>
                         <div className="text-[10px] text-gray-400">
                           {plate.count} plate{plate.count > 1 ? 's' : ''} @ ₹{(plate.rate || 0).toFixed(2)}

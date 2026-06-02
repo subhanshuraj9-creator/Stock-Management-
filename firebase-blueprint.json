@@ -99,9 +99,24 @@
           "type": "boolean",
           "description": "Whether this job shares/combines printing materials"
         },
+        "lamination": {
+          "type": "object",
+          "properties": {
+            "halfEnabled": { "type": "boolean" },
+            "halfQty": { "type": "number" },
+            "halfRate": { "type": "number" },
+            "fullEnabled": { "type": "boolean" },
+            "fullQty": { "type": "number" },
+            "fullRate": { "type": "number" }
+          }
+        },
         "jointRef": {
           "type": "string",
           "description": "Sharing/combination reference string"
+        },
+        "previewImage": {
+          "type": "string",
+          "description": "Base64 representation of job artwork/proof image for preview"
         }
       },
       "required": ["clientName", "jobDescription", "date", "items"]
@@ -127,6 +142,16 @@
         "createdAt": { "type": "number", "description": "Timestamp of creation" }
       },
       "required": ["name", "createdAt"]
+    },
+    "BoardSection": {
+      "title": "Board Section",
+      "description": "Represents a category division of board stocks.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the board section" },
+        "createdAt": { "type": "number", "description": "Timestamp of creation" }
+      },
+      "required": ["name", "createdAt"]
     }
   },
   "firestore": {
@@ -145,6 +170,10 @@
     "/paperSections/{sectionId}": {
       "schema": "PaperSection",
       "description": "Collection of custom paper sub-categories / sections"
+    },
+    "/boardSections/{sectionId}": {
+      "schema": "BoardSection",
+      "description": "Collection of custom board sub-categories / sections"
     }
   }
 }

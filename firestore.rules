@@ -87,7 +87,7 @@ service cloud.firestore {
 
     function isValidJob(data) {
       return hasRequiredFields(data, ['clientName', 'jobDescription', 'date', 'items']) &&
-             hasOnlyAllowedFields(data, ['clientName', 'jobDescription', 'date', 'items', 'platesUsed', 'processCharges', 'orderedQuantity', 'dispatches', 'dispatchStatus', 'isJoint', 'jointRef']) &&
+             hasOnlyAllowedFields(data, ['clientName', 'jobDescription', 'date', 'items', 'platesUsed', 'processCharges', 'orderedQuantity', 'dispatches', 'dispatchStatus', 'isJoint', 'jointRef', 'previewImage', 'lamination']) &&
              data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 100 &&
              data.jobDescription is string && data.jobDescription.size() >= 1 && data.jobDescription.size() <= 1000 &&
              data.date is number &&
@@ -98,7 +98,9 @@ service cloud.firestore {
              (!('dispatches' in data) || (data.dispatches is list)) &&
              (!('dispatchStatus' in data) || (data.dispatchStatus in ['pending', 'partial', 'completed'])) &&
              (!('isJoint' in data) || (data.isJoint is bool)) &&
-             (!('jointRef' in data) || (data.jointRef is string));
+             (!('jointRef' in data) || (data.jointRef is string)) &&
+             (!('previewImage' in data) || (data.previewImage is string && data.previewImage.size() <= 1048576)) &&
+             (!('lamination' in data) || (data.lamination is map));
     }
 
     function isValidPayment(data) {
@@ -136,6 +138,13 @@ service cloud.firestore {
     }
 
     function isValidPaperSection(data) {
+      return hasRequiredFields(data, ['name', 'createdAt']) &&
+             hasOnlyAllowedFields(data, ['name', 'createdAt']) &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             data.createdAt is number;
+    }
+
+    function isValidBoardSection(data) {
       return hasRequiredFields(data, ['name', 'createdAt']) &&
              hasOnlyAllowedFields(data, ['name', 'createdAt']) &&
              data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
@@ -183,6 +192,13 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidPaperSection(request.resource.data);
       allow update: if isAuthenticated() && isValidPaperSection(request.resource.data);
+      allow delete: if isAuthenticated();
+    }
+
+    match /boardSections/{sectionId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidBoardSection(request.resource.data);
+      allow update: if isAuthenticated() && isValidBoardSection(request.resource.data);
       allow delete: if isAuthenticated();
     }
 

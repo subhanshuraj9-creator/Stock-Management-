@@ -665,7 +665,9 @@ export function PartyLedger() {
         plateTotal += plateCost;
         if (plateCost > 0) {
           const stock = stocks.find(s => s.id === plate.plateId);
-          plateDetails.push(`${stock?.name || 'Plate'}: ${plate.count} @ ₹${(plate.rate || 0).toFixed(2)}`);
+          const isAdditional = (job.isJoint || (job.jointRef && job.jointRef.trim() !== '')) && !plate.isJoint && !plate.isJointRef;
+          const label = isAdditional ? `${stock?.name || 'Plate'} (Additional Plate)` : (stock?.name || 'Plate');
+          plateDetails.push(`${label}: ${plate.count} @ ₹${(plate.rate || 0).toFixed(2)}`);
         }
       });
 
@@ -1106,74 +1108,28 @@ export function PartyLedger() {
                       />
                     </div>
                     <div className="md:col-span-2 border-t border-amber-100 pt-4 mt-2">
-                      <h5 className="text-xs font-serif font-bold text-amber-950 uppercase tracking-widest flex items-center gap-1.5 mb-3">
-                        <FileText className="h-3.5 w-3.5 text-[#5A5A40]" /> PDF LAYOUT & STYLE CONFIGURATOR
-                      </h5>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                        <div className="space-y-1">
-                          <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900 font-sans">Layout Theme / Font Pairing</Label>
-                          <select 
-                            value={layoutTheme} 
-                            onChange={e => updateLedgerSetting('layoutTheme', e.target.value)}
-                            className="w-full bg-white border border-gray-200 text-xs rounded-lg h-9 px-2 outline-none focus:border-[#5A5A40]"
-                          >
-                            <option value="classic">Classic Pressman (Garamond & Georgia)</option>
-                            <option value="modern">Modern Digital (Sleek Inter Sans)</option>
-                            <option value="elegant">Editorial Grace (Luxury Serif)</option>
-                            <option value="compact">Compact Ledger (Fitted monospace)</option>
-                          </select>
-                        </div>
+                      <div className="flex flex-wrap gap-6 items-center bg-white p-2.5 rounded-lg border border-amber-100/50">
+                        <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900 mr-2 font-sans">Toggle Footer Sections:</Label>
+                        
+                        <label className="flex items-center gap-2 text-xs font-medium text-gray-700 cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={showTerms} 
+                            onChange={e => updateLedgerSetting('showTerms', e.target.checked)}
+                            className="rounded border-gray-300 text-[#5A5A40] focus:ring-[#5A5A40]" 
+                          />
+                          Statement Notes & Terms
+                        </label>
 
-                        <div className="space-y-1">
-                          <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900 font-sans">Accent Color Palette</Label>
-                          <select 
-                            value={accentColor} 
-                            onChange={e => updateLedgerSetting('accentColor', e.target.value)}
-                            className="w-full bg-white border border-gray-200 text-xs rounded-lg h-9 px-2 outline-none focus:border-[#5A5A40]"
-                          >
-                            <option value="original">Sage Press (Original Olive Green)</option>
-                            <option value="blue">Ocean Sapphire (Deep Royal Blue)</option>
-                            <option value="green">Forest Emerald (Corporate Teal)</option>
-                            <option value="crimson">Royal Ruby (Bordeaux Red)</option>
-                            <option value="charcoal">Slate Obsidian (Classic Charcoal)</option>
-                          </select>
-                        </div>
-
-                        <div className="space-y-1">
-                          <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900 font-sans">Company Header Mode</Label>
-                          <select 
-                            value={headerMode} 
-                            onChange={e => updateLedgerSetting('headerMode', e.target.value)}
-                            className="w-full bg-white border border-gray-200 text-xs rounded-lg h-9 px-2 outline-none focus:border-[#5A5A40]"
-                          >
-                            <option value="full_header">Print Full Company Header</option>
-                            <option value="letterhead">Leave Space for Preprinted Letterhead</option>
-                          </select>
-                        </div>
-
-                        <div className="sm:col-span-2 md:col-span-3 flex flex-wrap gap-6 items-center bg-white p-2.5 rounded-lg border border-amber-100/50 mt-1">
-                          <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900 mr-2 font-sans">Toggle Footer Sections:</Label>
-                          
-                          <label className="flex items-center gap-2 text-xs font-medium text-gray-700 cursor-pointer">
-                            <input 
-                              type="checkbox" 
-                              checked={showTerms} 
-                              onChange={e => updateLedgerSetting('showTerms', e.target.checked)}
-                              className="rounded border-gray-300 text-[#5A5A40] focus:ring-[#5A5A40]" 
-                            />
-                            Statement Notes & Terms
-                          </label>
-
-                          <label className="flex items-center gap-2 text-xs font-medium text-gray-700 cursor-pointer">
-                            <input 
-                              type="checkbox" 
-                              checked={showSignature} 
-                              onChange={e => updateLedgerSetting('showSignature', e.target.checked)}
-                              className="rounded border-gray-300 text-[#5A5A40] focus:ring-[#5A5A40]" 
-                            />
-                            Authorized Signatory Slot
-                          </label>
-                        </div>
+                        <label className="flex items-center gap-2 text-xs font-medium text-gray-700 cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={showSignature} 
+                            onChange={e => updateLedgerSetting('showSignature', e.target.checked)}
+                            className="rounded border-gray-300 text-[#5A5A40] focus:ring-[#5A5A40]" 
+                          />
+                          Authorized Signatory Slot
+                        </label>
                       </div>
                     </div>
                   </div>

@@ -36,13 +36,26 @@ export interface Job {
     isJoint?: boolean; // If true: no stock deduction! Shared across parties
     plateRef?: string; // Reference tag of the joint plate to link jobs (e.g. "P-042")
     rate?: number; // Rate per plate for party ledger
+    isJointRef?: boolean;
+    refJobId?: string;
+    isReused?: boolean; // If true: reused/repeat plate, no stock deduction
+    isCancelled?: boolean; // If true: cancelled plate (consumes stock, excluded from invoice/ledger)
   }[];
   processCharges?: ProcessCharge[];
+  lamination?: {
+    halfEnabled: boolean;
+    halfQty?: number;
+    halfRate?: number;
+    fullEnabled: boolean;
+    fullQty?: number;
+    fullRate?: number;
+  };
   orderedQuantity?: number; // Total bulk quantity ordered (e.g. 10000 brochures)
   dispatches?: DispatchRecord[]; // Direct partial dispatch tracking logs
   dispatchStatus?: 'pending' | 'partial' | 'completed'; // Computed or manually adjusted status
   isJoint?: boolean; // If true, the whole job is joint
   jointRef?: string; // Reference of the joint job to link other jobs
+  previewImage?: string; // Base64 representation of job artwork/proof image for preview
 }
 
 export interface DispatchRecord {
