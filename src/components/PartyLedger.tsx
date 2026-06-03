@@ -635,13 +635,13 @@ export function PartyLedger() {
         paperTotal += itemCost;
         if (itemCost > 0) {
           const stock = stocks.find(s => s.id === item.stockId);
-          paperDetails.push(`${stock?.name || 'Paper'}: ${billingSheets} sheets @ ₹${(item.rate || 0).toFixed(2)}/500 shs`);
+          paperDetails.push(`${stock?.name || 'Stock'}: ${billingSheets} sheets @ ₹${(item.rate || 0).toFixed(2)}/500 shs`);
         }
       });
 
       let plateTotal = 0;
       const plateDetails: string[] = [];
-      const platesToProcess = [...(job.platesUsed || [])].filter(p => !p.isCancelled);
+      const platesToProcess = [...(job.platesUsed || [])];
 
       if (job.isJoint && job.jointRef) {
         const cleanRef = job.jointRef.trim().toUpperCase().replace('#', '');

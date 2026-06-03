@@ -39,7 +39,9 @@ export interface Job {
     isJointRef?: boolean;
     refJobId?: string;
     isReused?: boolean; // If true: reused/repeat plate, no stock deduction
-    isCancelled?: boolean; // If true: cancelled plate (consumes stock, excluded from invoice/ledger)
+    isCancelled?: boolean; // If true: cancelled plate (consumes stock, client IS charged, cannot be reused in repeat/future jobs)
+    cancelledColor?: 'C' | 'M' | 'Y' | 'K' | ''; // Selected color channel for cancelled plate
+    isAdditionalPlate?: boolean; // If true: added as an additional/replacement plate
   }[];
   processCharges?: ProcessCharge[];
   lamination?: {
@@ -55,6 +57,8 @@ export interface Job {
   dispatchStatus?: 'pending' | 'partial' | 'completed'; // Computed or manually adjusted status
   isJoint?: boolean; // If true, the whole job is joint
   jointRef?: string; // Reference of the joint job to link other jobs
+  isRepeat?: boolean; // If true, the whole job is a repeat job
+  repeatRef?: string; // Reference of the parent job for repeat
   previewImage?: string; // Base64 representation of job artwork/proof image for preview
 }
 

@@ -173,13 +173,16 @@ export function JobManagement() {
     clientName: '',
     jobDescription: '',
     selectedItems: [] as JobItem[],
-    platesUsed: [] as { plateId: string; count: number; isJoint?: boolean; plateRef?: string; rate?: number; isReused?: boolean; isCancelled?: boolean; }[],
+    platesUsed: [] as { plateId: string; count: number; isJoint?: boolean; plateRef?: string; rate?: number; isReused?: boolean; isCancelled?: boolean; cancelledColor?: string; isAdditionalPlate?: boolean; }[],
     processCharges: getInitialProcessCharges(),
     lamination: getInitialLamination(),
     ignoreStockLimits: false,
     orderedQuantity: '' as string | number,
     isJoint: false,
-    jointRef: ''
+    jointRef: '',
+    isRepeat: false,
+    repeatRef: '',
+    date: new Date().toISOString().split('T')[0]
   });
 
   useEffect(() => {
@@ -300,6 +303,19 @@ export function JobManagement() {
           ? existingPlate.rate 
           : (p.rate || stockDefault);
 
+        if (p.isCancelled) {
+          // If the parent plate is cancelled, create it as a standard chargeable plate for the local job
+          return {
+            plateId: p.plateId,
+            count: p.count,
+            rate: rateToUse,
+            isJoint: false,
+            plateRef: '',
+            isReused: false,
+            isCancelled: false
+          };
+        }
+
         return {
           ...p,
           rate: rateToUse,
@@ -321,6 +337,184 @@ export function JobManagement() {
       const matchedPaperStock = stocks.find(s => s.id === matchingJob.items?.[0]?.stockId);
       const stockMsg = matchedPaperStock ? ` (Stock: ${matchedPaperStock.name})` : '';
       toast.success(`Connected to Job #${cleanRef}${stockMsg}. Material & Plate stocks synchronized!`);
+    }
+  };
+
+  const getCalculatedReusedPlates = (platesUsed: any[]) => {
+    const res: { plateId: string; count: number; rate: number; isJoint: boolean; plateRef: string; isReused: boolean; isCancelled: boolean; isAdditionalPlate: boolean; label?: string }[] = [];
+    
+    platesUsed.forEach((p) => {
+      const stockDefault = stocks.find(s => s.id === p.plateId)?.defaultRate || 0;
+      const rateToUse = p.rate || stockDefault;
+
+      if (p.isCancelled) {
+        const cancelledCount = (p.cancelledColor || '').split('/').filter(Boolean).length || 1;
+        const remainingCount = Math.max(0, p.count - cancelledCount);
+        
+        if (remainingCount > 0) {
+          res.push({
+            plateId: p.plateId,
+            count: remainingCount,
+            rate: rateToUse,
+            isJoint: false,
+            plateRef: '',
+            isReused: true,
+            isCancelled: false,
+            isAdditionalPlate: false,
+            label: 'Plate Left Earlier'
+          });
+        }
+      } else if (p.isAdditionalPlate) {
+        res.push({
+          plateId: p.plateId,
+          count: p.count,
+          rate: rateToUse,
+          isJoint: false,
+          plateRef: '',
+          isReused: true,
+          isCancelled: false,
+          isAdditionalPlate: true,
+          label: 'Additional Plate'
+        });
+      } else {
+        res.push({
+          plateId: p.plateId,
+          count: p.count,
+          rate: rateToUse,
+          isJoint: false,
+          plateRef: '',
+          isReused: true,
+          isCancelled: false,
+          isAdditionalPlate: false,
+          label: 'Original Plate'
+        });
+      }
+    });
+    return res;
+  };
+
+  const applyRepeatRefAndAutoDetect = (refCode: string, items = formData.selectedItems, plates = formData.platesUsed) => {
+    const cleanRef = refCode.trim().toUpperCase().replace('#', '');
+    const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+    
+    let updatedPlates: any[] = [];
+    let updatedItems = [...items];
+    let clientNameUpdate = formData.clientName;
+    let descUpdate = formData.jobDescription;
+
+    if (matchingJob) {
+      if (!clientNameUpdate) clientNameUpdate = matchingJob.clientName;
+      if (!descUpdate || descUpdate.startsWith('Repeat of')) descUpdate = `Repeat of ${matchingJob.jobDescription}`;
+
+      // Auto-populate plates from the previous job and mark them as Reused
+      if (matchingJob.platesUsed && matchingJob.platesUsed.length > 0) {
+        updatedPlates = getCalculatedReusedPlates(matchingJob.platesUsed);
+      }
+
+      // Auto-populate paper stock items
+      if (matchingJob.items && matchingJob.items.length > 0) {
+        const ordered = Number(formData.orderedQuantity || matchingJob.orderedQuantity) || 0;
+        updatedItems = matchingJob.items.map((item) => {
+          const upsVal = Number(item.ups) || 1;
+          const calculated = upsVal > 0 ? Math.ceil(ordered / upsVal) : 0;
+          return {
+            stockId: item.stockId || '',
+            rate: item.rate || 0,
+            ups: item.ups,
+            autoCalculate: item.autoCalculate ?? true,
+            calculatedSheets: calculated,
+            quantityUsed: item.autoCalculate ? calculated : item.quantityUsed,
+            isJoint: false,
+            paperRef: ''
+          };
+        });
+      }
+    }
+
+    setFormData({
+      ...formData,
+      isRepeat: true,
+      repeatRef: refCode,
+      clientName: clientNameUpdate,
+      jobDescription: descUpdate,
+      selectedItems: updatedItems,
+      platesUsed: updatedPlates
+    } as any);
+
+    if (matchingJob && cleanRef.length === 4) {
+      toast.success(`Repeat connected to Job #${cleanRef}. Reused plates & paper specs loaded!`);
+    }
+  };
+
+  const handleRepeatRefChange = (val: string) => {
+    applyRepeatRefAndAutoDetect(val);
+  };
+
+  const handleJobTypeChange = (type: 'standard' | 'repeat' | 'joint') => {
+    if (type === 'repeat') {
+      const refValue = (formData as any).repeatRef || '';
+      const updatedItems = formData.selectedItems.map(item => ({
+        ...item,
+        isJoint: false,
+        paperRef: ''
+      }));
+      setFormData({
+        ...formData,
+        isJoint: false,
+        jointRef: '',
+        isRepeat: true,
+        repeatRef: refValue,
+        selectedItems: updatedItems
+      } as any);
+      if (refValue) {
+        applyRepeatRefAndAutoDetect(refValue, updatedItems, formData.platesUsed);
+      }
+    } else if (type === 'joint') {
+      const refValue = (formData as any).jointRef || '';
+      const firstItem = formData.selectedItems[0];
+      const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === refValue.trim().toUpperCase().replace('#', ''));
+      
+      const updatedItems = [{
+        stockId: matchingJob?.items?.[0]?.stockId || firstItem?.stockId || '',
+        rate: matchingJob?.items?.[0]?.rate || firstItem?.rate || 0,
+        quantityUsed: matchingJob?.items?.[0]?.quantityUsed || firstItem?.quantityUsed || 0,
+        calculatedSheets: matchingJob?.items?.[0]?.calculatedSheets || firstItem?.calculatedSheets || 0,
+        ups: matchingJob?.items?.[0]?.ups || firstItem?.ups,
+        isJoint: true,
+        paperRef: refValue
+      }];
+
+      setFormData({
+        ...formData,
+        isJoint: true,
+        jointRef: refValue,
+        isRepeat: false,
+        repeatRef: '',
+        selectedItems: updatedItems
+      } as any);
+      if (refValue) {
+        applyJointRefAndAutoDetect(refValue, updatedItems, formData.platesUsed);
+      }
+    } else {
+      const updatedItems = formData.selectedItems.map(item => ({
+        ...item,
+        isJoint: false,
+        paperRef: ''
+      }));
+      setFormData({
+        ...formData,
+        isJoint: false,
+        jointRef: '',
+        isRepeat: false,
+        repeatRef: '',
+        selectedItems: updatedItems,
+        platesUsed: formData.platesUsed.map(p => ({
+          ...p,
+          isJoint: false,
+          plateRef: '',
+          isReused: false
+        }))
+      } as any);
     }
   };
 
@@ -350,6 +544,19 @@ export function JobManagement() {
           const rateToUse = (existingPlate && existingPlate.plateId === p.plateId && existingPlate.rate !== undefined && existingPlate.rate > 0) 
             ? existingPlate.rate 
             : (p.rate || stockDefault);
+
+          if (p.isCancelled) {
+            // Cancelled in parent -> make as regular newly made plate in repeat job
+            return {
+              plateId: p.plateId,
+              count: p.count,
+              rate: rateToUse,
+              isJoint: false,
+              plateRef: '',
+              isReused: false,
+              isCancelled: false
+            };
+          }
 
           return {
             ...p,
@@ -449,7 +656,44 @@ export function JobManagement() {
     setFormData({ ...formData, platesUsed: newPlates });
   };
 
-  const handlePlateChange = (index: number, field: 'plateId' | 'count' | 'isJoint' | 'plateRef' | 'rate' | 'isReused' | 'isCancelled', value: any) => {
+  const handleToggleCancelledColor = (index: number, color: string) => {
+    const currentVal = formData.platesUsed[index]?.cancelledColor || '';
+    const currentColors = currentVal ? currentVal.split('/') : [];
+    let nextColors: string[];
+    if (currentColors.includes(color)) {
+      nextColors = currentColors.filter(c => c !== color);
+    } else {
+      const baseOrder = { C: 1, M: 2, Y: 3, K: 4 };
+      nextColors = [...currentColors, color].sort((a, b) => {
+        return (baseOrder[a as keyof typeof baseOrder] || 9) - (baseOrder[b as keyof typeof baseOrder] || 9);
+      });
+    }
+    handlePlateChange(index, 'cancelledColor', nextColors.join('/'));
+  };
+
+  const handleAddReplacementPlate = (index: number) => {
+    const origPlate = formData.platesUsed[index];
+    if (!origPlate) return;
+    setFormData({
+      ...formData,
+      platesUsed: [
+        ...formData.platesUsed,
+        {
+          plateId: origPlate.plateId || '',
+          count: origPlate.count || 0,
+          rate: origPlate.rate || 0,
+          isJoint: false,
+          plateRef: '',
+          isCancelled: false,
+          cancelledColor: '',
+          isAdditionalPlate: true
+        }
+      ]
+    });
+    toast.success('Added an additional plate corresponding to the cancelled plate!');
+  };
+
+  const handlePlateChange = (index: number, field: 'plateId' | 'count' | 'isJoint' | 'plateRef' | 'rate' | 'isReused' | 'isCancelled' | 'cancelledColor' | 'isAdditionalPlate', value: any) => {
     const newPlates = [...formData.platesUsed];
     let rateUpdate = {};
     if (field === 'plateId' && value) {
@@ -550,6 +794,14 @@ export function JobManagement() {
           }
         }
 
+        let jobDateTimestamp = Date.now();
+        if (formData.date) {
+          const parsedDate = new Date(formData.date);
+          const now = new Date();
+          parsedDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+          jobDateTimestamp = parsedDate.getTime();
+        }
+
         // 2. Deduct stock and record history (excluding joint plates and shared print runs)
         stockSnaps.forEach((snap, i) => {
           const item = allItems[i];
@@ -564,7 +816,7 @@ export function JobManagement() {
           const historyRef = doc(collection(db, 'stockHistory'));
           transaction.set(historyRef, {
             stockId: item.id,
-            date: Date.now(),
+            date: jobDateTimestamp,
             type: 'usage',
             quantity: -item.used,
             previousQuantity: stockData.quantity,
@@ -577,7 +829,7 @@ export function JobManagement() {
         const jobData = {
           clientName: formData.clientName,
           jobDescription: formData.jobDescription,
-          date: Date.now(),
+          date: jobDateTimestamp,
           items: formData.selectedItems,
           platesUsed: formData.platesUsed,
           processCharges: formData.processCharges.filter(pc => pc.amount > 0 || (pc.notes && pc.notes.trim() !== '')),
@@ -594,7 +846,7 @@ export function JobManagement() {
       });
 
       setIsAddOpen(false);
-      setFormData({ clientName: '', jobDescription: '', selectedItems: [], platesUsed: [], processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '' } as any);
+      setFormData({ clientName: '', jobDescription: '', selectedItems: [], platesUsed: [], processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '', isRepeat: false, repeatRef: '', date: new Date().toISOString().split('T')[0] } as any);
       toast.success('Job created and stock updated successfully');
     } catch (error: any) {
       toast.error(error.message || 'Failed to create job');
@@ -968,7 +1220,7 @@ export function JobManagement() {
             const historyRef = doc(collection(db, 'stockHistory'));
             transaction.set(historyRef, {
               stockId: id,
-              date: Date.now(),
+              date: formData.date ? new Date(formData.date).getTime() : Date.now(),
               type: netChange > 0 ? 'addition' : 'usage',
               quantity: netChange,
               previousQuantity: stock.quantity,
@@ -1002,14 +1254,15 @@ export function JobManagement() {
           orderedQuantity: orderedQty,
           dispatchStatus: status,
           isJoint: !!(formData as any).isJoint,
-          jointRef: (formData as any).jointRef || ''
+          jointRef: (formData as any).jointRef || '',
+          date: formData.date ? new Date(formData.date).getTime() : Date.now()
         };
 
         transaction.update(doc(db, 'jobs', editingJob.id), cleanUndefined(updateFields) as any);
       });
 
       setEditingJob(null);
-      setFormData({ clientName: '', jobDescription: '', selectedItems: [], platesUsed: [], processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '' } as any);
+      setFormData({ clientName: '', jobDescription: '', selectedItems: [], platesUsed: [], processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '', isRepeat: false, repeatRef: '', date: new Date().toISOString().split('T')[0] } as any);
       toast.success('Job updated successfully');
     } catch (error: any) {
       toast.error(error.message || 'Failed to update job');
@@ -1052,7 +1305,9 @@ export function JobManagement() {
               ignoreStockLimits: false,
               orderedQuantity: '',
               isJoint: false,
-              jointRef: ''
+              jointRef: '',
+              isRepeat: false,
+              repeatRef: ''
             } as any);
           }
         }}>
@@ -1065,6 +1320,21 @@ export function JobManagement() {
             </DialogHeader>
             <form onSubmit={handleAddJob} className="space-y-6 py-4">
               <div className="space-y-4">
+                <div className="flex justify-between items-center px-1">
+                  <span className="text-xs text-gray-400 font-medium font-mono uppercase tracking-widest">Job Setup</span>
+                  <div className="flex items-center gap-1.5 bg-gray-50/50 px-2.5 py-1 rounded-xl border border-gray-100 shadow-3xs">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Date:</span>
+                    <input 
+                      type="date" 
+                      id="jobDate" 
+                      value={formData.date || ''} 
+                      onChange={e => setFormData({...formData, date: e.target.value})} 
+                      required 
+                      className="bg-transparent text-[11px] text-gray-700 font-bold focus:outline-hidden w-[105px] h-auto p-0 border-0 cursor-pointer" 
+                    />
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-gray-50/50 rounded-2xl border border-gray-100 shadow-xs">
                   <div className="space-y-2">
                     <Label htmlFor="clientName" className="flex items-center gap-1 text-sm font-semibold text-gray-700">
@@ -1095,27 +1365,76 @@ export function JobManagement() {
                     required
                   />
                 </div>
-                <div className="flex flex-col md:flex-row gap-4 p-4 bg-amber-50/50 rounded-2xl border border-amber-100/70 mt-3 space-y-3 md:space-y-0">
-                  <div className="flex items-center gap-2">
-                    <input 
-                      id="isJointJob"
-                      type="checkbox" 
-                      checked={!!(formData as any).isJoint} 
-                      onChange={e => handleJointJobToggle(e.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-0 cursor-pointer"
-                    />
-                    <Label htmlFor="isJointJob" className="text-sm text-amber-800 font-bold cursor-pointer select-none">This is a Joint Job</Label>
+                <div className="space-y-3 p-4 bg-gray-50 rounded-2xl border border-gray-200 mt-3 shadow-xs">
+                  <Label className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">Job Link Workflow / Relationship</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleJobTypeChange('standard')}
+                      className={`py-2 px-3 text-xs font-semibold rounded-xl border text-center transition-all cursor-pointer ${
+                        !formData.isJoint && !formData.isRepeat
+                          ? 'bg-[#5A5A40] text-white border-[#5A5A40] shadow-sm font-bold'
+                          : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      Standard Job
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleJobTypeChange('repeat')}
+                      className={`py-2 px-3 text-xs font-semibold rounded-xl border text-center transition-all cursor-pointer ${
+                        formData.isRepeat
+                          ? 'bg-[#5F7A61] text-white border-[#5F7A61] shadow-sm font-bold'
+                          : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      Repeat Job
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleJobTypeChange('joint')}
+                      className={`py-2 px-3 text-xs font-semibold rounded-xl border text-center transition-all cursor-pointer ${
+                        formData.isJoint
+                          ? 'bg-amber-700 text-white border-amber-700 shadow-sm font-bold'
+                          : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      Joint Job
+                    </button>
                   </div>
-                  {!!(formData as any).isJoint && (
-                    <div className="flex-1 space-y-1">
-                      <Label className="text-[10px] font-bold text-gray-500 uppercase">Shared Joint Job Reference Code</Label>
+
+                  {/* If Repeat Job is selected */}
+                  {formData.isRepeat && (
+                    <div className="space-y-1 pt-2 animate-fadeIn transition-all">
+                      <Label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1">
+                        <span>Select Previous Job ID</span>
+                        <span className="text-red-500 font-bold">*</span>
+                      </Label>
+                      <Input 
+                        type="text" 
+                        placeholder="Previous Job Code to repeat/reuse plates (e.g. A3B8)" 
+                        list="active-jobs-list"
+                        value={(formData as any).repeatRef || ''} 
+                        onChange={e => handleRepeatRefChange(e.target.value)}
+                        className="bg-white h-10 text-xs rounded-xl font-mono uppercase border-gray-200 focus-visible:ring-[#5F7A61]"
+                      />
+                    </div>
+                  )}
+
+                  {/* If Joint Job is selected */}
+                  {formData.isJoint && (
+                    <div className="space-y-1 pt-2 animate-fadeIn transition-all">
+                      <Label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1">
+                        <span>Shared Joint Job Reference Code</span>
+                        <span className="text-red-500 font-bold">*</span>
+                      </Label>
                       <Input 
                         type="text" 
                         placeholder="Job Code to share paper & plates with (e.g. A3B8)" 
                         list="active-jobs-list"
                         value={(formData as any).jointRef || ''} 
                         onChange={e => handleJointJobRefChange(e.target.value)}
-                        className="bg-white h-9 text-xs rounded-lg font-mono uppercase"
+                        className="bg-white h-10 text-xs rounded-xl font-mono uppercase border-gray-200 focus-visible:ring-amber-600"
                       />
                     </div>
                   )}
@@ -1131,6 +1450,79 @@ export function JobManagement() {
                   <Label htmlFor="ignoreStockLimits" className="text-xs text-amber-800 font-semibold cursor-pointer select-none">Bypass Stock Validation (Allow negative stock)</Label>
                 </div>
               </div>
+
+              {formData.isRepeat && (
+                <div className="p-5 bg-emerald-50/50 rounded-2xl border border-emerald-100/70 space-y-4 mb-3">
+                  <h4 className="font-serif text-sm font-semibold text-emerald-950 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
+                    Repeat Job Configuration
+                  </h4>
+                  <p className="text-xs text-emerald-900 leading-relaxed">
+                    Plates are reused automatically from previous job{' '}
+                    <span className="font-mono font-extrabold bg-emerald-100 px-1.5 py-0.5 rounded text-emerald-950 border border-emerald-200 shadow-sm">
+                      #{formData.repeatRef ? formData.repeatRef.toUpperCase() : '????'}
+                    </span>. Plate stock will <span className="font-bold text-emerald-700">not</span> be deducted.
+                  </p>
+                  
+                  {(() => {
+                    const cleanRef = (formData.repeatRef || '').trim().toUpperCase().replace('#', '');
+                    const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+                    return (
+                      <div className="text-xs bg-white p-4 rounded-xl border border-gray-100/80 space-y-2.5">
+                        {matchingJob ? (
+                          <div className="space-y-3">
+                            <div className="flex justify-between items-center pb-2 border-b border-gray-100">
+                              <span className="text-gray-500 font-medium font-serif">Referenced Print Job:</span>
+                              <span className="font-semibold text-gray-900 bg-gray-50 px-2.5 py-1 rounded-lg border border-gray-200 text-slate-800">
+                                Job #{cleanRef} ({matchingJob.clientName})
+                              </span>
+                            </div>
+                            
+                            {/* Detected Plates */}
+                            {(() => {
+                              const platesToDisplay = getCalculatedReusedPlates(matchingJob.platesUsed);
+
+                              return platesToDisplay.length > 0 ? (
+                                <div className="space-y-1.5 pt-2">
+                                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Auto-detected Reused Plates:</span>
+                                  {platesToDisplay.map((p, idx) => {
+                                    const stock = stocks.find(s => s.id === p.plateId);
+                                    return (
+                                      <div key={idx} className="flex justify-between items-center text-[11px] bg-emerald-50/30 px-2.5 py-1.5 rounded-lg border border-emerald-100/30">
+                                        <div className="flex flex-col gap-0.5">
+                                          <span className="font-semibold text-emerald-950">{stock?.name || 'Plate'}</span>
+                                          {p.label && (
+                                            <span className={`text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded leading-none w-fit ${
+                                              p.label === 'Plate Left Earlier' ? 'bg-amber-100 text-amber-800' :
+                                              p.label === 'Additional Plate' ? 'bg-pink-100 text-pink-800' :
+                                              'bg-emerald-100 text-emerald-800'
+                                            }`}>
+                                              {p.label}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <span className="font-mono bg-emerald-100/20 px-2.5 py-1 rounded text-emerald-800 font-bold">{p.count} plates (Reused)</span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div className="text-[11px] text-gray-500 italic pt-1.5 border-t border-gray-100">
+                                  No plates detected in the referenced job.
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        ) : (
+                          <div className="text-gray-400 italic text-center py-2 font-serif">
+                            {formData.repeatRef ? 'Searching / Loading referenced job details...' : 'Please enter a valid four-digit job code above'}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
 
               {formData.isJoint ? (
                 <div className="p-5 bg-amber-50/50 rounded-2xl border border-amber-100/70 space-y-4">
@@ -1175,6 +1567,17 @@ export function JobManagement() {
                                 <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">Detected Shareable Plates:</span>
                                 {matchingJob.platesUsed.map((p, idx) => {
                                   const stock = stocks.find(s => s.id === p.plateId);
+                                  if (p.isCancelled) {
+                                    return (
+                                      <div key={idx} className="flex justify-between items-center text-[11px] bg-red-50/70 px-2.5 py-1.5 rounded-lg border border-red-200/50">
+                                        <span className="font-semibold text-red-950 flex flex-wrap items-center gap-1.5">
+                                          <span>{stock?.name || 'Plate'}</span>
+                                          <span className="text-[9px] font-bold bg-red-100 text-red-800 px-1.5 py-0.5 rounded leading-none shrink-0 uppercase">Retired / Cancelled ({p.cancelledColor || 'C/M/Y/K'})</span>
+                                        </span>
+                                        <span className="text-[9px] text-red-700 italic font-bold">New Plate Will Be Remade</span>
+                                      </div>
+                                    );
+                                  }
                                   return (
                                     <div key={idx} className="flex justify-between items-center text-[11px] bg-amber-50/40 px-2.5 py-1.5 rounded-lg border border-amber-100/40">
                                       <span className="font-semibold text-amber-950">{stock?.name || 'Plate'}</span>
@@ -1466,7 +1869,14 @@ export function JobManagement() {
                   <div key={index} className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end p-4 bg-gray-50 rounded-2xl border border-gray-100">
                     <div className="md:col-span-11 grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="space-y-2">
-                        <Label className="text-xs font-semibold text-gray-700">Select Plate</Label>
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <Label className="text-xs font-semibold text-gray-700">Select Plate</Label>
+                          {plate.isAdditionalPlate && (
+                            <Badge className="bg-pink-500 hover:bg-pink-600 border-none text-white text-[9px] h-4 px-1.5 leading-none uppercase tracking-wider font-bold">
+                              Additional Plate
+                            </Badge>
+                          )}
+                        </div>
                         <StockSelect 
                           value={plate.plateId} 
                           onValueChange={(v) => handlePlateChange(index, 'plateId', v)}
@@ -1512,33 +1922,69 @@ export function JobManagement() {
                       )}
                     </div>
 
-                    {/* Reuse and Cancelled checkboxes in Add Form */}
+                    {/* Cancelled checkbox in Add Form */}
                     <div className="col-span-12 flex flex-wrap gap-4 pt-2 border-t border-gray-100/60 mt-1">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          id={`plate-reused-${index}`}
-                          checked={!!plate.isReused}
-                          onChange={e => handlePlateChange(index, 'isReused', e.target.checked)}
-                          className="h-4 w-4 rounded border-gray-300 text-[#5A5A40] focus:ring-0 cursor-pointer"
-                        />
-                        <Label htmlFor={`plate-reused-${index}`} className="text-xs text-gray-600 font-semibold select-none cursor-pointer">
-                          Repeat Job (Same Plate/No Stock Deduction)
-                        </Label>
-                      </div>
                       <div className="flex items-center gap-2">
                         <input
                           type="checkbox"
                           id={`plate-cancelled-${index}`}
                           checked={!!plate.isCancelled}
-                          onChange={e => handlePlateChange(index, 'isCancelled', e.target.checked)}
+                          onChange={e => {
+                            const val = e.target.checked;
+                            handlePlateChange(index, 'isCancelled', val);
+                            if (val && !plate.cancelledColor) {
+                              handlePlateChange(index, 'cancelledColor', 'C');
+                            }
+                          }}
                           className="h-4 w-4 rounded border-gray-300 text-red-550 focus:ring-0 cursor-pointer"
                         />
                         <Label htmlFor={`plate-cancelled-${index}`} className="text-xs text-red-600 font-semibold select-none cursor-pointer">
-                          Cancelled Plate (Worn Out/Not in Invoice/Ledger)
+                          Cancelled for Future Repeat (Retired Plate - Client is Charged)
                         </Label>
                       </div>
                     </div>
+
+                    {plate.isCancelled && (
+                      <div className="col-span-12 space-y-3 px-4 py-3 bg-red-50/50 border border-red-200/50 rounded-2xl mt-1.5 animate-fadeIn">
+                        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="space-y-1">
+                            <span className="text-xs font-bold text-red-800 block">Choose Cancelled Color Channel(s):</span>
+                            <span className="text-[10px] text-red-600 block leading-tight">Select all colors that apply to this retired/spoiled plate block.</span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {(['C', 'M', 'Y', 'K'] as const).map(color => {
+                              const isSelected = (plate.cancelledColor || '').split('/').includes(color);
+                              return (
+                                <button
+                                  key={color}
+                                  type="button"
+                                  onClick={() => handleToggleCancelledColor(index, color)}
+                                  className={`h-7 px-3 text-xs font-extrabold rounded-lg border transition-all cursor-pointer ${
+                                    isSelected
+                                      ? 'bg-red-600 text-white border-red-600 shadow-xs font-bold'
+                                      : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                                  }`}
+                                >
+                                  {color}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="pt-2 border-t border-red-200/40 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
+                          <span className="text-xs text-red-700 font-medium">Need to add another plate to compensate for this cancelled one?</span>
+                          <button
+                            type="button"
+                            onClick={() => handleAddReplacementPlate(index)}
+                            className="bg-red-600/15 hover:bg-red-600/25 text-red-800 text-xs font-bold py-1.5 px-3.5 rounded-xl border border-red-200 transition-all flex items-center gap-1.5 shadow-xs w-fit cursor-pointer"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-plus"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                            Add Additional Plate Used
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     {!!plate.isJoint && plate.plateRef && (
                       <div className="col-span-12 flex items-center gap-2 px-3 py-1 bg-amber-50/60 border border-amber-100/40 text-[10px] text-amber-800 rounded">
@@ -1794,9 +2240,7 @@ export function JobManagement() {
 
                 let plateTotal = 0;
                 formData.platesUsed.forEach(plate => {
-                  if (!plate.isCancelled) {
-                    plateTotal += (plate.count || 0) * (plate.rate || 0);
-                  }
+                  plateTotal += (plate.count || 0) * (plate.rate || 0);
                 });
 
                 let processTotal = 0;
@@ -2068,7 +2512,8 @@ export function JobManagement() {
                             ignoreStockLimits: false,
                             orderedQuantity: job.orderedQuantity || '',
                             isJoint: !!job.isJoint || job.items.some(i => i.isJoint) || (job.platesUsed || []).some(p => p.isJoint),
-                            jointRef: jobRef
+                            jointRef: jobRef,
+                            date: job.date ? format(new Date(job.date), 'yyyy-MM-dd') : new Date().toISOString().split('T')[0]
                           } as any);
                         }}
                       >
@@ -2155,17 +2600,19 @@ export function JobManagement() {
                                     ? 'bg-amber-50/70 border-amber-200 text-amber-900' 
                                     : 'bg-gray-50 border-gray-100 text-gray-900'
                                 }`}>
-                                  <div className="flex justify-between items-center text-xs md:text-sm">
-                                    <span className="font-medium truncate mr-2 flex items-center gap-1.5">
-                                      {stock?.name || 'Unknown Stock'}
-                                      {isJoint && (
-                                        <Badge className="bg-amber-500 hover:bg-amber-600 border-none text-white text-[9px] h-4 px-1 leading-none">
-                                          Joint Job
-                                        </Badge>
-                                      )}
-                                    </span>
-                                    <span className={`font-mono text-xs font-semibold whitespace-nowrap ${isJoint ? 'text-amber-700' : 'text-gray-500'}`}>
-                                      {item.quantityUsed} sheets
+                                  <div className="flex justify-between items-start text-xs md:text-sm">
+                                    <div className="flex flex-col min-w-0 mr-2">
+                                      <span className="font-semibold truncate text-gray-800 flex items-center gap-1.5 break-all">
+                                        {stock?.name || 'Unknown Stock'}
+                                        {isJoint && (
+                                          <Badge className="bg-amber-500 hover:bg-amber-600 border-none text-white text-[9px] h-4 px-1 leading-none">
+                                            Joint Job
+                                          </Badge>
+                                        )}
+                                      </span>
+                                    </div>
+                                    <span className={`font-mono text-xs font-semibold whitespace-nowrap ${isJoint ? 'text-amber-700' : 'text-gray-600'} bg-gray-100 px-1.5 py-0.5 rounded-md`}>
+                                      {item.quantityUsed.toLocaleString()} shs
                                     </span>
                                   </div>
 
@@ -2237,7 +2684,7 @@ export function JobManagement() {
                                   })
                                 : [];
                               
-                              const isAdditional = (job.isJoint || (job.jointRef && job.jointRef.trim() !== '')) && !plate.isJoint && !plate.isJointRef;
+                              const isAdditional = !!plate.isAdditionalPlate || ((job.isJoint || (job.jointRef && job.jointRef.trim() !== '')) && !plate.isJoint && !plate.isJointRef);
                               
                               return (
                                 <div key={`plate-${idx}`} className={`flex flex-col gap-1.5 p-2 md:p-3 rounded-xl border flex-1 min-w-[200px] ${
@@ -2543,7 +2990,7 @@ export function JobManagement() {
       {editingJob && (
         <Dialog open={!!editingJob} onOpenChange={() => {
           setEditingJob(null);
-          setFormData({ clientName: '', jobDescription: '', selectedItems: [], platesUsed: [], processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '' } as any);
+          setFormData({ clientName: '', jobDescription: '', selectedItems: [], platesUsed: [], processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '', isRepeat: false, repeatRef: '', date: new Date().toISOString().split('T')[0] } as any);
         }}>
           <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -2551,6 +2998,21 @@ export function JobManagement() {
             </DialogHeader>
             <form onSubmit={handleUpdateJob} className="space-y-6 py-4">
               <div className="space-y-4">
+                <div className="flex justify-between items-center px-1">
+                  <span className="text-xs text-gray-400 font-medium font-mono uppercase tracking-widest">Job Details</span>
+                  <div className="flex items-center gap-1.5 bg-gray-50/50 px-2.5 py-1 rounded-xl border border-gray-100 shadow-3xs">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Date:</span>
+                    <input 
+                      type="date" 
+                      id="edit-jobDate" 
+                      value={formData.date || ''} 
+                      onChange={e => setFormData({...formData, date: e.target.value})} 
+                      required 
+                      className="bg-transparent text-[11px] text-gray-700 font-bold focus:outline-hidden w-[105px] h-auto p-0 border-0 cursor-pointer" 
+                    />
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-gray-50/50 rounded-2xl border border-gray-100 shadow-xs">
                   <div className="space-y-2">
                     <Label htmlFor="edit-clientName" className="flex items-center gap-1 text-sm font-semibold text-gray-700">
@@ -2581,27 +3043,76 @@ export function JobManagement() {
                     required
                   />
                 </div>
-                <div className="flex flex-col md:flex-row gap-4 p-4 bg-amber-50/50 rounded-2xl border border-amber-100/70 mt-3 space-y-3 md:space-y-0">
-                  <div className="flex items-center gap-2">
-                    <input 
-                      id="edit-isJointJob"
-                      type="checkbox" 
-                      checked={!!(formData as any).isJoint} 
-                      onChange={e => handleJointJobToggle(e.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-0 cursor-pointer"
-                    />
-                    <Label htmlFor="edit-isJointJob" className="text-sm text-amber-800 font-bold cursor-pointer select-none">This is a Joint Job</Label>
+                <div className="space-y-3 p-4 bg-gray-50 rounded-2xl border border-gray-200 mt-3 shadow-xs">
+                  <Label className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">Job Link Workflow / Relationship</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleJobTypeChange('standard')}
+                      className={`py-2 px-3 text-xs font-semibold rounded-xl border text-center transition-all cursor-pointer ${
+                        !formData.isJoint && !formData.isRepeat
+                          ? 'bg-[#5A5A40] text-white border-[#5A5A40] shadow-sm font-bold'
+                          : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      Standard Job
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleJobTypeChange('repeat')}
+                      className={`py-2 px-3 text-xs font-semibold rounded-xl border text-center transition-all cursor-pointer ${
+                        formData.isRepeat
+                          ? 'bg-[#5F7A61] text-white border-[#5F7A61] shadow-sm font-bold'
+                          : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      Repeat Job
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleJobTypeChange('joint')}
+                      className={`py-2 px-3 text-xs font-semibold rounded-xl border text-center transition-all cursor-pointer ${
+                        formData.isJoint
+                          ? 'bg-amber-700 text-white border-amber-700 shadow-sm font-bold'
+                          : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      Joint Job
+                    </button>
                   </div>
-                  {!!(formData as any).isJoint && (
-                    <div className="flex-1 space-y-1">
-                      <Label className="text-[10px] font-bold text-gray-500 uppercase">Shared Joint Job Reference Code</Label>
+
+                  {/* If Repeat Job is selected */}
+                  {formData.isRepeat && (
+                    <div className="space-y-1 pt-2 animate-fadeIn transition-all">
+                      <Label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1">
+                        <span>Select Previous Job ID</span>
+                        <span className="text-red-500 font-bold">*</span>
+                      </Label>
+                      <Input 
+                        type="text" 
+                        placeholder="Previous Job Code to repeat/reuse plates (e.g. A3B8)" 
+                        list="active-jobs-list"
+                        value={(formData as any).repeatRef || ''} 
+                        onChange={e => handleRepeatRefChange(e.target.value)}
+                        className="bg-white h-10 text-xs rounded-xl font-mono uppercase border-gray-200 focus-visible:ring-[#5F7A61]"
+                      />
+                    </div>
+                  )}
+
+                  {/* If Joint Job is selected */}
+                  {formData.isJoint && (
+                    <div className="space-y-1 pt-2 animate-fadeIn transition-all">
+                      <Label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1">
+                        <span>Shared Joint Job Reference Code</span>
+                        <span className="text-red-500 font-bold">*</span>
+                      </Label>
                       <Input 
                         type="text" 
                         placeholder="Job Code to share paper & plates with (e.g. A3B8)" 
                         list="active-jobs-list"
                         value={(formData as any).jointRef || ''} 
                         onChange={e => handleJointJobRefChange(e.target.value)}
-                        className="bg-white h-9 text-xs rounded-lg font-mono uppercase"
+                        className="bg-white h-10 text-xs rounded-xl font-mono uppercase border-gray-200 focus-visible:ring-amber-600"
                       />
                     </div>
                   )}
@@ -2617,6 +3128,79 @@ export function JobManagement() {
                   <Label htmlFor="edit-ignoreStockLimits" className="text-xs text-amber-800 font-semibold cursor-pointer select-none">Bypass Stock Validation (Allow negative stock)</Label>
                 </div>
               </div>
+
+              {formData.isRepeat && (
+                <div className="p-5 bg-emerald-50/50 rounded-2xl border border-emerald-100/70 space-y-4 mb-3">
+                  <h4 className="font-serif text-sm font-semibold text-emerald-950 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
+                    Repeat Job Configuration
+                  </h4>
+                  <p className="text-xs text-emerald-900 leading-relaxed">
+                    Plates are reused automatically from previous job{' '}
+                    <span className="font-mono font-extrabold bg-emerald-100 px-1.5 py-0.5 rounded text-emerald-950 border border-emerald-200 shadow-sm">
+                      #{formData.repeatRef ? formData.repeatRef.toUpperCase() : '????'}
+                    </span>. Plate stock will <span className="font-bold text-emerald-700">not</span> be deducted.
+                  </p>
+                  
+                  {(() => {
+                    const cleanRef = (formData.repeatRef || '').trim().toUpperCase().replace('#', '');
+                    const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+                    return (
+                      <div className="text-xs bg-white p-4 rounded-xl border border-gray-100/80 space-y-2.5">
+                        {matchingJob ? (
+                          <div className="space-y-3">
+                            <div className="flex justify-between items-center pb-2 border-b border-gray-100">
+                              <span className="text-gray-500 font-medium font-serif">Referenced Print Job:</span>
+                              <span className="font-semibold text-gray-900 bg-gray-50 px-2.5 py-1 rounded-lg border border-gray-200 text-slate-800">
+                                Job #{cleanRef} ({matchingJob.clientName})
+                              </span>
+                            </div>
+                            
+                            {/* Detected Plates */}
+                            {(() => {
+                              const platesToDisplay = getCalculatedReusedPlates(matchingJob.platesUsed);
+
+                              return platesToDisplay.length > 0 ? (
+                                <div className="space-y-1.5 pt-2">
+                                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Auto-detected Reused Plates:</span>
+                                  {platesToDisplay.map((p, idx) => {
+                                    const stock = stocks.find(s => s.id === p.plateId);
+                                    return (
+                                      <div key={idx} className="flex justify-between items-center text-[11px] bg-emerald-50/30 px-2.5 py-1.5 rounded-lg border border-emerald-100/30">
+                                        <div className="flex flex-col gap-0.5">
+                                          <span className="font-semibold text-emerald-950">{stock?.name || 'Plate'}</span>
+                                          {p.label && (
+                                            <span className={`text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded leading-none w-fit ${
+                                              p.label === 'Plate Left Earlier' ? 'bg-amber-100 text-amber-800' :
+                                              p.label === 'Additional Plate' ? 'bg-pink-100 text-pink-800' :
+                                              'bg-emerald-100 text-emerald-800'
+                                            }`}>
+                                              {p.label}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <span className="font-mono bg-emerald-100/20 px-2.5 py-1 rounded text-emerald-800 font-bold">{p.count} plates (Reused)</span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div className="text-[11px] text-gray-500 italic pt-1.5 border-t border-gray-100">
+                                  No plates detected in the referenced job.
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        ) : (
+                          <div className="text-gray-400 italic text-center py-2 font-serif">
+                            {formData.repeatRef ? 'Searching / Loading referenced job details...' : 'Please enter a valid four-digit job code above'}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
 
               {formData.isJoint ? (
                 <div className="p-5 bg-amber-50/50 rounded-2xl border border-amber-100/70 space-y-4">
@@ -2661,6 +3245,17 @@ export function JobManagement() {
                                 <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">Detected Shareable Plates:</span>
                                 {matchingJob.platesUsed.map((p, idx) => {
                                   const stock = stocks.find(s => s.id === p.plateId);
+                                  if (p.isCancelled) {
+                                    return (
+                                      <div key={idx} className="flex justify-between items-center text-[11px] bg-red-50/70 px-2.5 py-1.5 rounded-lg border border-red-200/50">
+                                        <span className="font-semibold text-red-950 flex flex-wrap items-center gap-1.5">
+                                          <span>{stock?.name || 'Plate'}</span>
+                                          <span className="text-[9px] font-bold bg-red-100 text-red-800 px-1.5 py-0.5 rounded leading-none shrink-0 uppercase">Retired / Cancelled ({p.cancelledColor || 'C/M/Y/K'})</span>
+                                        </span>
+                                        <span className="text-[9px] text-red-700 italic font-bold">New Plate Will Be Remade</span>
+                                      </div>
+                                    );
+                                  }
                                   return (
                                     <div key={idx} className="flex justify-between items-center text-[11px] bg-amber-50/40 px-2.5 py-1.5 rounded-lg border border-amber-100/40">
                                       <span className="font-semibold text-amber-950">{stock?.name || 'Plate'}</span>
@@ -2952,7 +3547,14 @@ export function JobManagement() {
                   <div key={index} className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end p-4 bg-gray-50 rounded-2xl border border-gray-100">
                     <div className="md:col-span-11 grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="space-y-2">
-                        <Label className="text-xs font-semibold text-gray-700">Select Plate</Label>
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <Label className="text-xs font-semibold text-gray-700">Select Plate</Label>
+                          {plate.isAdditionalPlate && (
+                            <Badge className="bg-pink-500 hover:bg-pink-600 border-none text-white text-[9px] h-4 px-1.5 leading-none uppercase tracking-wider font-bold">
+                              Additional Plate
+                            </Badge>
+                          )}
+                        </div>
                         <StockSelect 
                           value={plate.plateId} 
                           onValueChange={(v) => handlePlateChange(index, 'plateId', v)}
@@ -2998,33 +3600,69 @@ export function JobManagement() {
                       )}
                     </div>
 
-                    {/* Reuse and Cancelled checkboxes in Edit Form */}
+                    {/* Cancelled checkbox in Edit Form */}
                     <div className="col-span-12 flex flex-wrap gap-4 pt-2 border-t border-gray-100/60 mt-1">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          id={`edit-plate-reused-${index}`}
-                          checked={!!plate.isReused}
-                          onChange={e => handlePlateChange(index, 'isReused', e.target.checked)}
-                          className="h-4 w-4 rounded border-gray-300 text-[#5A5A40] focus:ring-0 cursor-pointer"
-                        />
-                        <Label htmlFor={`edit-plate-reused-${index}`} className="text-xs text-gray-600 font-semibold select-none cursor-pointer">
-                          Repeat Job (Same Plate/No Stock Deduction)
-                        </Label>
-                      </div>
                       <div className="flex items-center gap-2">
                         <input
                           type="checkbox"
                           id={`edit-plate-cancelled-${index}`}
                           checked={!!plate.isCancelled}
-                          onChange={e => handlePlateChange(index, 'isCancelled', e.target.checked)}
+                          onChange={e => {
+                            const val = e.target.checked;
+                            handlePlateChange(index, 'isCancelled', val);
+                            if (val && !plate.cancelledColor) {
+                              handlePlateChange(index, 'cancelledColor', 'C');
+                            }
+                          }}
                           className="h-4 w-4 rounded border-gray-300 text-red-550 focus:ring-0 cursor-pointer"
                         />
                         <Label htmlFor={`edit-plate-cancelled-${index}`} className="text-xs text-red-600 font-semibold select-none cursor-pointer">
-                          Cancelled Plate (Worn Out/Not in Invoice/Ledger)
+                          Cancelled for Future Repeat (Retired Plate - Client is Charged)
                         </Label>
                       </div>
                     </div>
+
+                    {plate.isCancelled && (
+                      <div className="col-span-12 space-y-3 px-4 py-3 bg-red-50/50 border border-red-200/50 rounded-2xl mt-1.5 animate-fadeIn">
+                        <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="space-y-1">
+                            <span className="text-xs font-bold text-red-800 block">Choose Cancelled Color Channel(s):</span>
+                            <span className="text-[10px] text-red-600 block leading-tight">Select all colors that apply to this retired/spoiled plate block.</span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {(['C', 'M', 'Y', 'K'] as const).map(color => {
+                              const isSelected = (plate.cancelledColor || '').split('/').includes(color);
+                              return (
+                                <button
+                                  key={color}
+                                  type="button"
+                                  onClick={() => handleToggleCancelledColor(index, color)}
+                                  className={`h-7 px-3 text-xs font-extrabold rounded-lg border transition-all cursor-pointer ${
+                                    isSelected
+                                      ? 'bg-red-600 text-white border-red-600 shadow-xs font-bold'
+                                      : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                                  }`}
+                                >
+                                  {color}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="pt-2 border-t border-red-200/40 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
+                          <span className="text-xs text-red-700 font-medium">Need to add another plate to compensate for this cancelled one?</span>
+                          <button
+                            type="button"
+                            onClick={() => handleAddReplacementPlate(index)}
+                            className="bg-red-600/15 hover:bg-red-600/25 text-red-800 text-xs font-bold py-1.5 px-3.5 rounded-xl border border-red-200 transition-all flex items-center gap-1.5 shadow-xs w-fit cursor-pointer"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-plus"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+                            Add Additional Plate Used
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     {!!plate.isJoint && plate.plateRef && (
                       <div className="col-span-12 flex items-center gap-2 px-3 py-1 bg-amber-50/60 border border-amber-100/40 text-[10px] text-amber-800 rounded">
@@ -3280,9 +3918,7 @@ export function JobManagement() {
 
                 let plateTotal = 0;
                 formData.platesUsed.forEach(plate => {
-                  if (!plate.isCancelled) {
-                    plateTotal += (plate.count || 0) * (plate.rate || 0);
-                  }
+                  plateTotal += (plate.count || 0) * (plate.rate || 0);
                 });
 
                 let processTotal = 0;

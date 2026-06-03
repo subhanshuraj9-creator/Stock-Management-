@@ -168,7 +168,7 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
   // Resolve plates used (including joint job plates lookup)
   const resolvedPlates = React.useMemo(() => {
     if (!job) return [];
-    const list = [...(job.platesUsed || [])].filter(p => !p.isCancelled);
+    const list = [...(job.platesUsed || [])];
     if (job.isJoint && job.jointRef && jobs && jobs.length > 0) {
       const cleanRef = job.jointRef.trim().toUpperCase().replace('#', '');
       const referencedJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
@@ -236,7 +236,7 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
       return `
         <tr>
           <td style="padding: 10px; border-bottom: 1px solid var(--border-color); font-size: 13px;">
-            ${stock?.name || 'Stock Material'}
+            <div style="font-weight: 600; color: #1a202c;">${stock?.name || 'Stock Material'}</div>
           </td>
           <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace;">
             ${billingSheets}
@@ -613,8 +613,8 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
       const total = ((billingSheets || 0) / 500) * (item.rate || 0);
       return `
         <tr>
-          <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; font-size: 13.5px; color:#2d3748;">
-            ${stock?.name || 'Stock Material'}
+          <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; font-size: 13.5px;">
+            <div style="font-weight: 600; color: #2d3748;">${stock?.name || 'Stock Material'}</div>
           </td>
           <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#4a5568;">
             ${billingSheets}
@@ -1214,7 +1214,7 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                   return (
                     <div key={`p-idx-${idx}`} className="flex justify-between items-start text-xs font-sans py-1 hover:bg-gray-50 rounded px-1">
                       <div>
-                        <span className="font-medium text-gray-800">
+                        <span className="font-semibold text-gray-900 flex flex-wrap items-center gap-1.5 leading-tight">
                           {stock?.name || 'Stock Material'}
                         </span>
                         <div className="text-[10px] text-gray-400">

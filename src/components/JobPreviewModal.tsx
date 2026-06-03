@@ -385,9 +385,7 @@ export function JobPreviewModal({ isOpen, onClose, job: initialJob, stocks, jobs
                                 return (
                                   <tr key={`print-spec-paper-${idx}`} className="hover:bg-gray-50/20">
                                     <td className="p-2 font-sans font-medium">
-                                      {stock?.name || 'Unknown Stock'} 
-                                      {stock?.gsm ? ` (${stock.gsm} GSM)` : ''}
-                                      {stock?.size ? ` - ${stock.size}` : ''}
+                                      <div className="font-bold text-gray-900">{stock?.name || 'Unknown Stock'}</div>
                                     </td>
                                     <td className="p-2 text-center font-mono font-medium">
                                       {item.quantityUsed.toLocaleString()} shs
@@ -434,9 +432,7 @@ export function JobPreviewModal({ isOpen, onClose, job: initialJob, stocks, jobs
                                         {p.isReused && (
                                           <span className="text-[10px] bg-slate-100 text-slate-700 font-bold px-1.5 py-0.5 rounded border border-slate-200">Same Plate/Reused</span>
                                         )}
-                                        {p.isCancelled && (
-                                          <span className="text-[10px] bg-red-50 text-red-700 font-bold px-1.5 py-0.5 rounded border border-red-100 animate-pulse">Cancelled (Not in Invoice)</span>
-                                        )}
+
                                       </div>
                                     </td>
                                     <td className="p-2 text-center font-mono font-medium">
@@ -445,7 +441,9 @@ export function JobPreviewModal({ isOpen, onClose, job: initialJob, stocks, jobs
                                     <td className="p-2 text-right">
                                       {p.isJoint ? (
                                         <span className="text-amber-600 font-bold text-[10px] bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100 print-no-bg">Shared Plate</span>
-                                      ) : isJobJoint ? (
+                                      ) : p.isReused ? (
+                                        <span className="text-emerald-700 font-bold text-[10px] bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 print-no-bg">Reused Plate</span>
+                                      ) : (isJobJoint || p.isAdditionalPlate) ? (
                                         <span className="text-pink-600 font-bold text-[10px] bg-pink-50 px-1.5 py-0.5 rounded border border-pink-100 print-no-bg">Additional Plate</span>
                                       ) : (
                                         <span className="text-gray-400 text-[10px]">Individual</span>

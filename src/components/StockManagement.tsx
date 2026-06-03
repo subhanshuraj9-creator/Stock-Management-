@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from './ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { Plus, Search, Trash2, Edit2, Package, Trash, History, ArrowRight, PlusCircle, ShoppingBag, IndianRupee, ReceiptText, Truck, Download } from 'lucide-react';
+import { Plus, Search, Trash2, Edit2, Package, Trash, History, ArrowRight, PlusCircle, ShoppingBag, IndianRupee, ReceiptText, Truck, Download, ArrowUpRight } from 'lucide-react';
 import { Badge } from './ui/badge';
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
@@ -148,6 +148,7 @@ export function StockManagement() {
     packType: 'ream' as 'ream' | 'bundle' | 'gross' | 'custom',
     packQuantity: '',
     sheetsPerPack: '500',
+    date: new Date().toISOString().split('T')[0],
   });
 
   const [usageFormData, setUsageFormData] = useState({
@@ -701,6 +702,14 @@ export function StockManagement() {
         if (invoiceNo) detailsParts.push(`Invoice: ${invoiceNo}`);
         if (customNotes) detailsParts.push(`Note: ${customNotes}`);
 
+        let purchaseDateTimestamp = Date.now();
+        if (purchaseFormData.date) {
+          const parsedDate = new Date(purchaseFormData.date);
+          const now = new Date();
+          parsedDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+          purchaseDateTimestamp = parsedDate.getTime();
+        }
+
         const noteString = `Purchase Restock. ${detailsParts.join(' | ')}`;
 
         transaction.update(stockRef, cleanUndefined(updatedFields));
@@ -708,7 +717,7 @@ export function StockManagement() {
         const historyRef = doc(collection(db, 'stockHistory'));
         transaction.set(historyRef, cleanUndefined({
           stockId: selectedStockForPurchase.id,
-          date: Date.now(),
+          date: purchaseDateTimestamp,
           type: 'addition',
           quantity: totalAddedQuantity,
           previousQuantity: stockData.quantity,
@@ -735,6 +744,7 @@ export function StockManagement() {
         packType: 'ream',
         packQuantity: '',
         sheetsPerPack: '500',
+        date: new Date().toISOString().split('T')[0],
       });
       toast.success('Purchase restock recorded successfully!');
     } catch (error: any) {
@@ -1011,6 +1021,7 @@ export function StockManagement() {
                           sheetsPerPack: stock.type === 'plate' 
                             ? getDefaultPlatesPerPacket(stock.size).toString() 
                             : '500',
+                          date: new Date().toISOString().split('T')[0],
                         });
                         setIsPurchaseOpen(true);
                       }}
@@ -1018,6 +1029,53 @@ export function StockManagement() {
                     >
                       <PlusCircle className="h-3 w-3 md:h-4 md:w-4" />
                     </Button>
+                    {stock.type === 'paper' && (
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-7 w-7 md:h-8 md:w-8 text-amber-700 hover:text-amber-900 hover:bg-amber-50"
+                        onClick={async () => {
+                          try {
+                            const stockRef = doc(db, 'stocks', stock.id);
+                            await runTransaction(db, async (transaction) => {
+                              const stockSnap = await transaction.get(stockRef);
+                              if (!stockSnap.exists()) throw new Error("Stock not found");
+                              
+                              const pTypeVal = stock.paperType || 'Other';
+                              
+                              const isExistingSect = boardSections.some(s => s.name.toLowerCase() === pTypeVal.toLowerCase());
+                              if (!isExistingSect && pTypeVal !== 'Other' && pTypeVal.trim() !== '') {
+                                const sectRef = doc(collection(db, 'boardSections'));
+                                transaction.set(sectRef, { name: pTypeVal, createdAt: Date.now() });
+                              }
+
+                              transaction.update(stockRef, {
+                                type: 'board',
+                                lastUpdated: Date.now()
+                              });
+
+                              const historyRef = doc(collection(db, 'stockHistory'));
+                              transaction.set(historyRef, {
+                                stockId: stock.id,
+                                date: Date.now(),
+                                type: 'usage',
+                                quantity: 0,
+                                previousQuantity: stock.quantity,
+                                newQuantity: stock.quantity,
+                                notes: `Moved stock "${stock.name}" from Paper to Board stock`
+                              });
+                            });
+                            toast.success(`Successfully moved "${stock.name}" to Board Stock!`);
+                          } catch (err) {
+                            console.error(err);
+                            toast.error('Failed to move stock to Board Stock');
+                          }
+                        }}
+                        title="Move to Board Stock"
+                      >
+                        <ArrowUpRight className="h-3 w-3 md:h-4 md:w-4" />
+                      </Button>
+                    )}
                     <Button 
                       variant="ghost" 
                       size="icon" 
@@ -1160,12 +1218,59 @@ export function StockManagement() {
                       sheetsPerPack: stock.type === 'plate' 
                         ? getDefaultPlatesPerPacket(stock.size).toString() 
                         : '500',
+                      date: new Date().toISOString().split('T')[0],
                     });
                     setIsPurchaseOpen(true);
                   }}
                 >
                   <PlusCircle className="h-3.5 w-3.5 mr-1" /> Restock
                 </Button>
+                {stock.type === 'paper' && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="h-8 px-2.5 rounded-full text-[11px] text-amber-700 hover:bg-amber-50 border-amber-200 shadow-2xs"
+                    onClick={async () => {
+                      try {
+                        const stockRef = doc(db, 'stocks', stock.id);
+                        await runTransaction(db, async (transaction) => {
+                          const stockSnap = await transaction.get(stockRef);
+                          if (!stockSnap.exists()) throw new Error("Stock not found");
+                          
+                          const pTypeVal = stock.paperType || 'Other';
+                          
+                          const isExistingSect = boardSections.some(s => s.name.toLowerCase() === pTypeVal.toLowerCase());
+                          if (!isExistingSect && pTypeVal !== 'Other' && pTypeVal.trim() !== '') {
+                            const sectRef = doc(collection(db, 'boardSections'));
+                            transaction.set(sectRef, { name: pTypeVal, createdAt: Date.now() });
+                          }
+
+                          transaction.update(stockRef, {
+                            type: 'board',
+                            lastUpdated: Date.now()
+                          });
+
+                          const historyRef = doc(collection(db, 'stockHistory'));
+                          transaction.set(historyRef, {
+                            stockId: stock.id,
+                            date: Date.now(),
+                            type: 'usage',
+                            quantity: 0,
+                            previousQuantity: stock.quantity,
+                            newQuantity: stock.quantity,
+                            notes: `Moved stock "${stock.name}" from Paper to Board stock`
+                          });
+                        });
+                        toast.success(`Successfully moved "${stock.name}" to Board Stock!`);
+                      } catch (err) {
+                        console.error(err);
+                        toast.error('Failed to move stock to Board Stock');
+                      }
+                    }}
+                  >
+                    <ArrowUpRight className="h-3.5 w-3.5 mr-1" /> Move to Board
+                  </Button>
+                )}
                 <Button 
                   variant="outline" 
                   size="sm" 
@@ -2875,6 +2980,29 @@ export function StockManagement() {
             <form onSubmit={handleUpdateStock} className="space-y-6 py-4">
               <div className="space-y-4">
                 <div className="space-y-2">
+                  <Label htmlFor="edit-type" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Stock Category</Label>
+                  <select
+                    id="edit-type"
+                    className="w-full bg-white border border-gray-200 rounded-xl px-4 h-12 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#5A5A40] focus:border-[#5A5A40]"
+                    value={formData.type}
+                    onChange={e => {
+                      const newType = e.target.value as StockType;
+                      setFormData({
+                        ...formData,
+                        type: newType,
+                        paperType: (newType === 'paper' || newType === 'board') ? 'Other' : '',
+                        inkContainers: newType === 'ink' ? (formData.inkContainers?.length > 0 ? formData.inkContainers : [{ weight: '', count: '' }]) : []
+                      });
+                    }}
+                  >
+                    <option value="paper">Paper</option>
+                    <option value="board">Board Stock</option>
+                    <option value="ink">Ink</option>
+                    <option value="plate">Plates</option>
+                  </select>
+                </div>
+
+                <div className="space-y-2">
                   <Label htmlFor="edit-name" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Description</Label>
                   <Input id="edit-name" className="rounded-xl border-gray-200 h-12" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
                 </div>
@@ -3063,6 +3191,46 @@ export function StockManagement() {
               </div>
 
               <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+                <div className="p-4 bg-emerald-50/20 rounded-2xl border border-emerald-100/30 space-y-3">
+                  <div className="flex justify-between items-center pb-2 border-b border-emerald-100/10">
+                    <span className="text-[10px] text-emerald-700/70 font-semibold uppercase tracking-wider">Restock Details</span>
+                    <div className="flex items-center gap-1.5 bg-[#e8f5e9]/45 px-2 py-0.5 rounded-lg border border-emerald-100/30">
+                      <span className="text-[9px] font-bold text-emerald-800 uppercase tracking-wider">Date:</span>
+                      <input 
+                        type="date" 
+                        id="purchase-date" 
+                        value={purchaseFormData.date} 
+                        onChange={e => setPurchaseFormData({...purchaseFormData, date: e.target.value})} 
+                        required 
+                        className="bg-transparent text-[11px] text-emerald-950 font-bold focus:outline-hidden w-[105px] h-auto p-0 border-0 cursor-pointer" 
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="purchase-vendor" className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">Supplier / Vendor</Label>
+                      <Input 
+                        id="purchase-vendor" 
+                        placeholder="e.g. Paramount Paper" 
+                        className="rounded-xl border-gray-200 h-11 text-xs bg-white" 
+                        value={purchaseFormData.supplier} 
+                        onChange={e => setPurchaseFormData({...purchaseFormData, supplier: e.target.value})} 
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="purchase-invoice" className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">Invoice / Bill #</Label>
+                      <Input 
+                        id="purchase-invoice" 
+                        placeholder="e.g. INV-2026-98" 
+                        className="rounded-xl border-gray-200 h-11 text-xs bg-white" 
+                        value={purchaseFormData.invoiceNo} 
+                        onChange={e => setPurchaseFormData({...purchaseFormData, invoiceNo: e.target.value})} 
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 {selectedStockForPurchase.type === 'ink' ? (
                   <div className="space-y-4 p-4 bg-purple-50/50 rounded-2xl border border-purple-100">
                     <div className="pb-1 border-b border-purple-100/30">
@@ -3484,29 +3652,6 @@ export function StockManagement() {
                       }
                     })()}
                   </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="purchase-vendor" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Supplier / Vendor</Label>
-                    <Input 
-                      id="purchase-vendor" 
-                      placeholder="e.g. Paramount Paper" 
-                      className="rounded-xl border-gray-200 h-11 text-xs" 
-                      value={purchaseFormData.supplier} 
-                      onChange={e => setPurchaseFormData({...purchaseFormData, supplier: e.target.value})} 
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="purchase-invoice" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Invoice / Bill #</Label>
-                    <Input 
-                      id="purchase-invoice" 
-                      placeholder="e.g. INV-2026-98" 
-                      className="rounded-xl border-gray-200 h-11 text-xs" 
-                      value={purchaseFormData.invoiceNo} 
-                      onChange={e => setPurchaseFormData({...purchaseFormData, invoiceNo: e.target.value})} 
-                    />
-                  </div>
                 </div>
 
                 <div className="space-y-1.5">
