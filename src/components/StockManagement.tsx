@@ -2438,15 +2438,6 @@ export function StockManagement() {
                 })} 
                 type="paper" 
               />
-              <StockHistoryTable 
-                items={stockHistory.filter(h => {
-                  const stock = stocks.find(s => s.id === h.stockId);
-                  if (!stock || stock.type !== 'paper') return false;
-                  if (selectedPaperType === 'all') return true;
-                  return stock.paperType === selectedPaperType;
-                })}
-                type="paper" 
-              />
             </TabsContent>
             <TabsContent value="board" className="mt-0">
               {/* Board Sub-Categories Navigation */}
@@ -2499,29 +2490,18 @@ export function StockManagement() {
                 })} 
                 type="board" 
               />
-              <StockHistoryTable 
-                items={stockHistory.filter(h => {
-                  const stock = stocks.find(s => s.id === h.stockId);
-                  if (!stock || stock.type !== 'board') return false;
-                  if (selectedBoardType === 'all') return true;
-                  return stock.paperType === selectedBoardType;
-                })}
-                type="board" 
-              />
             </TabsContent>
             <TabsContent value="ink" className="mt-0">
               <StockTable 
                 items={filteredStocks.filter(s => s.type === 'ink')} 
                 type="ink" 
               />
-              <StockHistoryTable items={stockHistory} type="ink" />
             </TabsContent>
             <TabsContent value="plate" className="mt-0">
               <StockTable 
                 items={filteredStocks.filter(s => s.type === 'plate')} 
                 type="plate" 
               />
-              <StockHistoryTable items={stockHistory} type="plate" />
             </TabsContent>
             <TabsContent value="purchase_summary" className="mt-0">
               <PurchaseSummaryView />
@@ -3182,12 +3162,48 @@ export function StockManagement() {
               </DialogTitle>
             </DialogHeader>
             <form onSubmit={handleRecordPurchase} className="space-y-4 py-3">
-              <div className="p-4 bg-emerald-50 bg-opacity-35 rounded-2xl border border-emerald-100/50 mb-1">
-                <p className="text-xs uppercase font-semibold text-emerald-800 tracking-wider">Item being restocked:</p>
-                <p className="text-base font-serif font-bold text-gray-800 mt-1">{selectedStockForPurchase.name}</p>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  Current Stock: <span className="font-mono font-medium text-gray-700">{selectedStockForPurchase.quantity.toLocaleString()} {selectedStockForPurchase.type === 'ink' ? 'kg' : selectedStockForPurchase.type === 'plate' ? 'units' : 'sheets'}</span>
-                </p>
+              <div className="p-4 bg-emerald-50 bg-opacity-35 rounded-2xl border border-emerald-100/50 mb-1 space-y-2">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-bold font-mono tracking-wider uppercase bg-emerald-100 text-emerald-800 border border-emerald-200/30">
+                      {selectedStockForPurchase.type}
+                    </span>
+                    <p className="text-base font-serif font-bold text-gray-800 mt-1">{selectedStockForPurchase.name}</p>
+                  </div>
+                  {selectedStockForPurchase.defaultRate !== undefined && (
+                    <div className="text-right">
+                      <span className="text-[10px] text-gray-400 uppercase tracking-wider block font-bold">Ref Rate</span>
+                      <span className="font-mono text-xs font-bold text-gray-700">₹{selectedStockForPurchase.defaultRate}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2 pt-2 border-t border-emerald-100/35 text-xs">
+                  {selectedStockForPurchase.gsm && (
+                    <div className="space-y-0.5">
+                      <span className="text-[10px] text-gray-400 uppercase tracking-wider block font-semibold">GSM</span>
+                      <p className="font-mono font-bold text-gray-700">{selectedStockForPurchase.gsm} gsm</p>
+                    </div>
+                  )}
+                  {selectedStockForPurchase.size && (
+                    <div className="space-y-0.5">
+                      <span className="text-[10px] text-gray-400 uppercase tracking-wider block font-semibold">Dimensions / Size</span>
+                      <p className="font-mono font-bold text-gray-700">{selectedStockForPurchase.size}</p>
+                    </div>
+                  )}
+                  {selectedStockForPurchase.paperType && (
+                    <div className="space-y-0.5 column-span-1">
+                      <span className="text-[10px] text-gray-400 uppercase tracking-wider block font-semibold">Classification</span>
+                      <p className="font-bold text-gray-700">{selectedStockForPurchase.paperType}</p>
+                    </div>
+                  )}
+                  <div className="space-y-0.5">
+                    <span className="text-[10px] text-gray-400 uppercase tracking-wider block font-semibold">On-Hand Stock</span>
+                    <p className="font-mono font-bold text-gray-700">
+                      {selectedStockForPurchase.quantity.toLocaleString()} {selectedStockForPurchase.type === 'ink' ? 'kg' : selectedStockForPurchase.type === 'plate' ? 'units' : 'sheets'}
+                    </p>
+                  </div>
+                </div>
               </div>
 
               <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
