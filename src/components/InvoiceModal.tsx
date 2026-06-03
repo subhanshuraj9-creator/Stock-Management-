@@ -101,7 +101,7 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
     };
   });
 
-  const [showConfig, setShowConfig] = useState(true);
+  const [showConfig, setShowConfig] = useState(false);
   const [zoom, setZoom] = useState<number>(0.85);
   const [profileExpanded, setProfileExpanded] = useState<boolean>(false);
 
@@ -130,6 +130,7 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
   // Synchronize from localStorage whenever dialog opens in case edited elsewhere
   React.useEffect(() => {
     if (isOpen) {
+      setShowConfig(false);
       const savedTheme = localStorage.getItem('pdf_layout_theme');
       if (savedTheme) setLayoutTheme(savedTheme as any);
       
@@ -1127,6 +1128,44 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                 className="bg-white h-9 text-xs"
                 id="press-input-prefix"
               />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900">Invoice Style Layout</Label>
+              <select
+                value={layoutTheme}
+                onChange={e => updateLayoutSetting('pdf_layout_theme', e.target.value)}
+                className="w-full bg-white h-9 text-xs rounded-lg border border-gray-200 px-2 cursor-pointer focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+              >
+                <option value="classic">Classic Georgia / Royal</option>
+                <option value="modern">Modern Sans / Corporate</option>
+                <option value="elegant">Elegant Playfair / Minimal</option>
+                <option value="compact">Compact Mono / Technical</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900">Accent Theme Color</Label>
+              <select
+                value={accentColor}
+                onChange={e => updateLayoutSetting('pdf_accent_color', e.target.value)}
+                className="w-full bg-white h-9 text-xs rounded-lg border border-gray-200 px-2 cursor-pointer focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+              >
+                <option value="original">Original Olive / Khaki</option>
+                <option value="blue">Deep Corporate Blue</option>
+                <option value="green">Emerald Green</option>
+                <option value="crimson">Crimson Red</option>
+                <option value="charcoal">Slate Charcoal</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900">Header Mode / Blank Space</Label>
+              <select
+                value={headerMode}
+                onChange={e => updateLayoutSetting('pdf_header_mode', e.target.value)}
+                className="w-full bg-white h-9 text-xs rounded-lg border border-gray-200 px-2 cursor-pointer focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+              >
+                <option value="full_header">Print Full Business Header</option>
+                <option value="letterhead">Blank (Use Preprinted Letterhead)</option>
+              </select>
             </div>
             <div className="md:col-span-2 border-t border-amber-100 pt-4 mt-2">
               <div className="flex flex-wrap gap-6 items-center bg-white/70 p-2.5 rounded-lg border border-amber-100/50">
