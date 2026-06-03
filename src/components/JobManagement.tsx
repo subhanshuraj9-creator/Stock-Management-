@@ -220,8 +220,8 @@ export function JobManagement() {
           quantityUsed: 0, 
           rate: 0,
           ups: undefined,
-          autoCalculate: true,
-          calculatedSheets: 0,
+          autoCalculate: isJoint,
+          calculatedSheets: undefined,
           isJoint: isJoint,
           paperRef: jointRef
         }
@@ -238,6 +238,15 @@ export function JobManagement() {
   const handleOrderedQuantityChange = (val: string) => {
     const ordered = Number(val) || 0;
     const updatedItems = formData.selectedItems.map(item => {
+      if (!formData.isJoint) {
+        return {
+          ...item,
+          ups: undefined,
+          calculatedSheets: undefined,
+          autoCalculate: false
+        };
+      }
+      
       const upsVal = Number(item.ups) || 1;
       const calculated = upsVal > 0 ? Math.ceil(ordered / upsVal) : 0;
       
@@ -499,7 +508,10 @@ export function JobManagement() {
       const updatedItems = formData.selectedItems.map(item => ({
         ...item,
         isJoint: false,
-        paperRef: ''
+        paperRef: '',
+        ups: undefined,
+        calculatedSheets: undefined,
+        autoCalculate: false
       }));
       setFormData({
         ...formData,
@@ -583,7 +595,10 @@ export function JobManagement() {
       const updatedItems = formData.selectedItems.map(item => ({
         ...item,
         isJoint: false,
-        paperRef: ''
+        paperRef: '',
+        ups: undefined,
+        calculatedSheets: undefined,
+        autoCalculate: false
       }));
       setFormData({
         ...formData,
@@ -609,19 +624,29 @@ export function JobManagement() {
         update.rate = selectedStock.defaultRate || 0;
       }
     }
+
+    if (field === 'quantityUsed') {
+      update.autoCalculate = false;
+    }
     
     const mergedItem = { ...newItems[index], ...update };
     
-    // Always calculate sheets required for individual jobs based on their orderedQuantity and ups
-    const ordered = Number(formData.orderedQuantity) || 0;
-    const upsVal = Number(mergedItem.ups) || 1;
-    const calculated = upsVal > 0 ? Math.ceil(ordered / upsVal) : 0;
-    mergedItem.calculatedSheets = calculated;
-    
-    // Physical sheet consumption is only equal to calculated requirement if not joint paper
-    if (mergedItem.autoCalculate && !mergedItem.isJoint) {
-      if (field === 'ups' || field === 'autoCalculate' || mergedItem.quantityUsed === 0) {
-        mergedItem.quantityUsed = calculated;
+    if (!formData.isJoint) {
+      mergedItem.autoCalculate = false;
+      mergedItem.calculatedSheets = undefined;
+      mergedItem.ups = undefined;
+    } else {
+      // Always calculate sheets required for individual jobs based on their orderedQuantity and ups
+      const ordered = Number(formData.orderedQuantity) || 0;
+      const upsVal = Number(mergedItem.ups) || 1;
+      const calculated = upsVal > 0 ? Math.ceil(ordered / upsVal) : 0;
+      mergedItem.calculatedSheets = calculated;
+      
+      // Physical sheet consumption is only equal to calculated requirement if not joint paper
+      if (mergedItem.autoCalculate && !mergedItem.isJoint) {
+        if (field === 'ups' || field === 'autoCalculate' || mergedItem.quantityUsed === 0) {
+          mergedItem.quantityUsed = calculated;
+        }
       }
     }
 
@@ -1726,8 +1751,7 @@ export function JobManagement() {
                   </div>
                   
                   {formData.selectedItems.map((item, index) => {
-                    const hasUps = item.ups !== undefined ? item.ups : 1;
-                    const isAuto = item.autoCalculate !== undefined ? item.autoCalculate : true;
+                    const isAuto = !formData.isJoint ? false : (item.autoCalculate !== undefined ? item.autoCalculate : true);
                     
                     return (
                       <div key={index} className="p-5 bg-white rounded-2xl border border-gray-200 shadow-sm space-y-4 relative">
@@ -1745,82 +1769,133 @@ export function JobManagement() {
 
                         <h4 className="font-serif text-sm font-semibold text-gray-700">Paper Item #{index + 1}</h4>
                         
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                          <div className="md:col-span-6 space-y-1.5">
-                            <Label className="text-xs font-bold text-gray-500 uppercase">Select Paper Stock</Label>
-                            <StockSelect 
-                              value={item.stockId} 
-                              onValueChange={(v) => handleItemChange(index, 'stockId', v)}
-                              stocks={stocks}
-                              type="paper"
-                              placeholder="Choose paper..."
-                            />
-                          </div>
+                        {!formData.isJoint ? (
+                          // Standard / Non-Joint Job Layout
+                          <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                            <div className="md:col-span-6 space-y-1.5">
+                              <Label className="text-xs font-bold text-gray-500 uppercase">Select Paper Stock</Label>
+                              <StockSelect 
+                                value={item.stockId} 
+                                onValueChange={(v) => handleItemChange(index, 'stockId', v)}
+                                stocks={stocks}
+                                type="paper"
+                                placeholder="Choose paper..."
+                              />
+                            </div>
 
-                          <div className="md:col-span-3 space-y-1.5">
-                            <Label className="text-xs font-bold text-gray-500 uppercase">Rate/500 shs (₹)</Label>
-                            <Input 
-                              type="number" 
-                              step="any"
-                              placeholder="0.00"
-                              value={item.rate === 0 ? '' : item.rate} 
-                              onChange={e => handleItemChange(index, 'rate', e.target.value === '' ? 0 : Number(e.target.value))} 
-                              onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                              required 
-                              className="bg-gray-50 border-gray-200 h-9"
-                            />
-                            {item.rate ? (
-                              <p className="text-[10px] text-sky-700 font-mono italic mt-0.5">
-                                ≈ ₹{((item.rate || 0) / 500).toFixed(4)}/sheet
-                              </p>
-                            ) : null}
-                          </div>
+                            <div className="md:col-span-3 space-y-1.5">
+                              <Label className="text-xs font-bold text-gray-500 uppercase">Rate/500 shs (₹)</Label>
+                              <Input 
+                                type="number" 
+                                step="any"
+                                placeholder="0.00"
+                                value={item.rate === 0 ? '' : item.rate} 
+                                onChange={e => handleItemChange(index, 'rate', e.target.value === '' ? 0 : Number(e.target.value))} 
+                                onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                                required 
+                                className="bg-gray-50 border-gray-200 h-9"
+                              />
+                              {item.rate ? (
+                                <p className="text-[10px] text-sky-700 font-mono italic mt-0.5">
+                                  ≈ ₹{((item.rate || 0) / 500).toFixed(4)}/sheet
+                                </p>
+                              ) : null}
+                            </div>
 
-                          <div className="md:col-span-3 space-y-1.5">
-                            <Label className="text-xs font-bold text-gray-500 uppercase">Matter Ups</Label>
-                            <Input 
-                              type="number" 
-                              placeholder="e.g. 4"
-                              value={item.ups || ''} 
-                              onChange={e => handleItemChange(index, 'ups', e.target.value === '' ? undefined : Number(e.target.value))} 
-                              onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                              className="bg-gray-50 border-gray-200 h-9"
-                            />
+                            <div className="md:col-span-3 space-y-1.5">
+                              <Label className="text-xs font-bold text-gray-500 uppercase">Actual Sheets Used</Label>
+                              <Input 
+                                type="number" 
+                                value={item.quantityUsed === 0 ? '' : item.quantityUsed} 
+                                onChange={e => handleItemChange(index, 'quantityUsed', e.target.value === '' ? 0 : Number(e.target.value))} 
+                                onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                                required
+                                placeholder="sheets"
+                                className="bg-gray-50 border-gray-200 h-9"
+                              />
+                            </div>
                           </div>
-                        </div>
+                        ) : (
+                          // Joint Job Layout
+                          <>
+                            <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                              <div className="md:col-span-6 space-y-1.5">
+                                <Label className="text-xs font-bold text-gray-500 uppercase">Select Paper Stock</Label>
+                                <StockSelect 
+                                  value={item.stockId} 
+                                  onValueChange={(v) => handleItemChange(index, 'stockId', v)}
+                                  stocks={stocks}
+                                  type="paper"
+                                  placeholder="Choose paper..."
+                                />
+                              </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-2 border-t border-gray-100 items-center">
-                          <div className="md:col-span-5 flex items-center gap-2">
-                            <input 
-                              type="checkbox" 
-                              id={`calc-${index}`}
-                              checked={isAuto}
-                              onChange={e => handleItemChange(index, 'autoCalculate', e.target.checked)}
-                              className="h-4 w-4 rounded border-gray-300 text-[#5A5A40] focus:ring-0 cursor-pointer"
-                            />
-                            <Label htmlFor={`calc-${index}`} className="text-xs text-gray-600 font-semibold cursor-pointer select-none">Auto Calculate sheets required</Label>
-                          </div>
+                              <div className="md:col-span-3 space-y-1.5">
+                                <Label className="text-xs font-bold text-gray-500 uppercase">Rate/500 shs (₹)</Label>
+                                <Input 
+                                  type="number" 
+                                  step="any"
+                                  placeholder="0.00"
+                                  value={item.rate === 0 ? '' : item.rate} 
+                                  onChange={e => handleItemChange(index, 'rate', e.target.value === '' ? 0 : Number(e.target.value))} 
+                                  onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                                  required 
+                                  className="bg-gray-50 border-gray-200 h-9"
+                                />
+                                {item.rate ? (
+                                  <p className="text-[10px] text-sky-700 font-mono italic mt-0.5">
+                                    ≈ ₹{((item.rate || 0) / 500).toFixed(4)}/sheet
+                                  </p>
+                                ) : null}
+                              </div>
 
-                          <div className="md:col-span-3 py-1 px-2.5 bg-gray-50 rounded-xl border border-gray-100 text-center">
-                            <span className="text-[9px] font-bold text-gray-400 uppercase block">Sheets Required</span>
-                            <span className="font-mono text-xs font-bold text-gray-800">
-                              {isAuto ? (item.calculatedSheets || 0).toLocaleString() : 'N/A'}
-                            </span>
-                          </div>
+                              <div className="md:col-span-3 space-y-1.5">
+                                <Label className="text-xs font-bold text-gray-500 uppercase">Matter Ups</Label>
+                                <Input 
+                                  type="number" 
+                                  placeholder="e.g. 4"
+                                  value={item.ups || ''} 
+                                  onChange={e => handleItemChange(index, 'ups', e.target.value === '' ? undefined : Number(e.target.value))} 
+                                  onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                                  className="bg-gray-50 border-gray-200 h-9"
+                                />
+                              </div>
+                            </div>
 
-                          <div className="md:col-span-4 space-y-1">
-                            <Label className="text-xs font-bold text-gray-500 uppercase">Actual Sheets Consumed</Label>
-                            <Input 
-                              type="number" 
-                              value={item.quantityUsed === 0 ? '' : item.quantityUsed} 
-                              onChange={e => handleItemChange(index, 'quantityUsed', e.target.value === '' ? 0 : Number(e.target.value))} 
-                              onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                              required={!formData.isJoint}
-                              placeholder="sheets"
-                              className="bg-gray-50 border-gray-200 h-9"
-                            />
-                          </div>
-                        </div>
+                            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-2 border-t border-gray-100 items-center">
+                              <div className="md:col-span-5 flex items-center gap-2">
+                                <input 
+                                  type="checkbox" 
+                                  id={`calc-${index}`}
+                                  checked={isAuto}
+                                  onChange={e => handleItemChange(index, 'autoCalculate', e.target.checked)}
+                                  className="h-4 w-4 rounded border-gray-300 text-[#5A5A40] focus:ring-0 cursor-pointer"
+                                />
+                                <Label htmlFor={`calc-${index}`} className="text-xs text-gray-600 font-semibold cursor-pointer select-none">Auto Calculate sheets required</Label>
+                              </div>
+
+                              <div className="md:col-span-3 py-1 px-2.5 bg-gray-50 rounded-xl border border-gray-100 text-center">
+                                <span className="text-[9px] font-bold text-gray-400 uppercase block">Sheets Required</span>
+                                <span className="font-mono text-xs font-bold text-gray-800">
+                                  {isAuto ? (item.calculatedSheets || 0).toLocaleString() : 'N/A'}
+                                </span>
+                              </div>
+
+                              <div className="md:col-span-4 space-y-1">
+                                <Label className="text-xs font-bold text-gray-500 uppercase">Actual Sheets Consumed</Label>
+                                <Input 
+                                  type="number" 
+                                  value={item.quantityUsed === 0 ? '' : item.quantityUsed} 
+                                  onChange={e => handleItemChange(index, 'quantityUsed', e.target.value === '' ? 0 : Number(e.target.value))} 
+                                  onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                                  required={!formData.isJoint}
+                                  placeholder="sheets"
+                                  className="bg-gray-50 border-gray-200 h-9"
+                                />
+                              </div>
+                            </div>
+                          </>
+                        )}
                         {!!item.isJoint && item.paperRef && (
                           <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 md:bg-amber-50/70 border border-amber-100 text-[11px] text-amber-800 rounded-lg">
                             <span className="font-semibold font-mono bg-amber-200/60 px-1 py-0.5 rounded">Joint Job Reference: #{item.paperRef}</span>
@@ -2231,7 +2306,7 @@ export function JobManagement() {
               {(() => {
                 let paperTotal = 0;
                 formData.selectedItems.forEach(item => {
-                  const isAuto = item.autoCalculate !== undefined ? item.autoCalculate : true;
+                  const isAuto = !formData.isJoint ? false : (item.autoCalculate !== undefined ? item.autoCalculate : true);
                   const billingSheets = isAuto ? (item.calculatedSheets || 0) : (item.quantityUsed || 0);
                   paperTotal += (billingSheets / 500) * (item.rate || 0);
                 });
@@ -3402,8 +3477,7 @@ export function JobManagement() {
                   </div>
                   
                   {formData.selectedItems.map((item, index) => {
-                    const hasUps = item.ups !== undefined ? item.ups : 1;
-                    const isAuto = item.autoCalculate !== undefined ? item.autoCalculate : true;
+                    const isAuto = !formData.isJoint ? false : (item.autoCalculate !== undefined ? item.autoCalculate : true);
 
                     return (
                       <div key={index} className="p-5 bg-white rounded-2xl border border-gray-200 shadow-sm space-y-4 relative">
@@ -3421,82 +3495,133 @@ export function JobManagement() {
 
                         <h4 className="font-serif text-sm font-semibold text-gray-700">Paper Item #{index + 1}</h4>
                         
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                          <div className="md:col-span-6 space-y-1.5">
-                            <Label className="text-xs font-bold text-gray-500 uppercase">Select Paper Stock</Label>
-                            <StockSelect 
-                              value={item.stockId} 
-                              onValueChange={(v) => handleItemChange(index, 'stockId', v)}
-                              stocks={stocks}
-                              type="paper"
-                              placeholder="Choose paper..."
-                            />
-                          </div>
+                        {!formData.isJoint ? (
+                          // Standard / Non-Joint Job Layout
+                          <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                            <div className="md:col-span-6 space-y-1.5">
+                              <Label className="text-xs font-bold text-gray-500 uppercase">Select Paper Stock</Label>
+                              <StockSelect 
+                                value={item.stockId} 
+                                onValueChange={(v) => handleItemChange(index, 'stockId', v)}
+                                stocks={stocks}
+                                type="paper"
+                                placeholder="Choose paper..."
+                              />
+                            </div>
 
-                          <div className="md:col-span-3 space-y-1.5">
-                            <Label className="text-xs font-bold text-gray-500 uppercase">Rate/500 shs (₹)</Label>
-                            <Input 
-                              type="number" 
-                              step="any"
-                              placeholder="0.00"
-                              value={item.rate === 0 ? '' : item.rate} 
-                              onChange={e => handleItemChange(index, 'rate', e.target.value === '' ? 0 : Number(e.target.value))} 
-                              onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                              required 
-                              className="bg-gray-50 border-gray-200 h-9"
-                            />
-                            {item.rate ? (
-                              <p className="text-[10px] text-sky-700 font-mono italic mt-0.5">
-                                ≈ ₹{((item.rate || 0) / 500).toFixed(4)}/sheet
-                              </p>
-                            ) : null}
-                          </div>
+                            <div className="md:col-span-3 space-y-1.5">
+                              <Label className="text-xs font-bold text-gray-500 uppercase">Rate/500 shs (₹)</Label>
+                              <Input 
+                                type="number" 
+                                step="any"
+                                placeholder="0.00"
+                                value={item.rate === 0 ? '' : item.rate} 
+                                onChange={e => handleItemChange(index, 'rate', e.target.value === '' ? 0 : Number(e.target.value))} 
+                                onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                                required 
+                                className="bg-gray-50 border-gray-200 h-9"
+                              />
+                              {item.rate ? (
+                                <p className="text-[10px] text-sky-700 font-mono italic mt-0.5">
+                                  ≈ ₹{((item.rate || 0) / 500).toFixed(4)}/sheet
+                                </p>
+                              ) : null}
+                            </div>
 
-                          <div className="md:col-span-3 space-y-1.5">
-                            <Label className="text-xs font-bold text-gray-500 uppercase">Matter Ups</Label>
-                            <Input 
-                              type="number" 
-                              placeholder="e.g. 4"
-                              value={item.ups || ''} 
-                              onChange={e => handleItemChange(index, 'ups', e.target.value === '' ? undefined : Number(e.target.value))} 
-                              onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                              className="bg-gray-50 border-gray-200 h-9"
-                            />
+                            <div className="md:col-span-3 space-y-1.5">
+                              <Label className="text-xs font-bold text-gray-500 uppercase">Actual Sheets Used</Label>
+                              <Input 
+                                type="number" 
+                                value={item.quantityUsed === 0 ? '' : item.quantityUsed} 
+                                onChange={e => handleItemChange(index, 'quantityUsed', e.target.value === '' ? 0 : Number(e.target.value))} 
+                                onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                                required
+                                placeholder="sheets"
+                                className="bg-gray-50 border-gray-200 h-9"
+                              />
+                            </div>
                           </div>
-                        </div>
+                        ) : (
+                          // Joint Job Layout
+                          <>
+                            <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                              <div className="md:col-span-6 space-y-1.5">
+                                <Label className="text-xs font-bold text-gray-500 uppercase">Select Paper Stock</Label>
+                                <StockSelect 
+                                  value={item.stockId} 
+                                  onValueChange={(v) => handleItemChange(index, 'stockId', v)}
+                                  stocks={stocks}
+                                  type="paper"
+                                  placeholder="Choose paper..."
+                                />
+                              </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-2 border-t border-gray-100 items-center">
-                          <div className="md:col-span-5 flex items-center gap-2">
-                            <input 
-                              type="checkbox" 
-                              id={`edit-calc-${index}`}
-                              checked={isAuto}
-                              onChange={e => handleItemChange(index, 'autoCalculate', e.target.checked)}
-                              className="h-4 w-4 rounded border-gray-300 text-[#5A5A40] focus:ring-0 cursor-pointer"
-                            />
-                            <Label htmlFor={`edit-calc-${index}`} className="text-xs text-gray-600 font-semibold cursor-pointer select-none">Auto Calculate sheets required</Label>
-                          </div>
+                              <div className="md:col-span-3 space-y-1.5">
+                                <Label className="text-xs font-bold text-gray-500 uppercase">Rate/500 shs (₹)</Label>
+                                <Input 
+                                  type="number" 
+                                  step="any"
+                                  placeholder="0.00"
+                                  value={item.rate === 0 ? '' : item.rate} 
+                                  onChange={e => handleItemChange(index, 'rate', e.target.value === '' ? 0 : Number(e.target.value))} 
+                                  onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                                  required 
+                                  className="bg-gray-50 border-gray-200 h-9"
+                                />
+                                {item.rate ? (
+                                  <p className="text-[10px] text-sky-700 font-mono italic mt-0.5">
+                                    ≈ ₹{((item.rate || 0) / 500).toFixed(4)}/sheet
+                                  </p>
+                                ) : null}
+                              </div>
 
-                          <div className="md:col-span-3 py-1 px-2.5 bg-gray-50 rounded-xl border border-gray-100 text-center">
-                            <span className="text-[9px] font-bold text-gray-400 uppercase block">Sheets Required</span>
-                            <span className="font-mono text-xs font-bold text-gray-800">
-                              {isAuto ? (item.calculatedSheets || 0).toLocaleString() : 'N/A'}
-                            </span>
-                          </div>
+                              <div className="md:col-span-3 space-y-1.5">
+                                <Label className="text-xs font-bold text-gray-500 uppercase">Matter Ups</Label>
+                                <Input 
+                                  type="number" 
+                                  placeholder="e.g. 4"
+                                  value={item.ups || ''} 
+                                  onChange={e => handleItemChange(index, 'ups', e.target.value === '' ? undefined : Number(e.target.value))} 
+                                  onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                                  className="bg-gray-50 border-gray-200 h-9"
+                                />
+                              </div>
+                            </div>
 
-                          <div className="md:col-span-4 space-y-1">
-                            <Label className="text-xs font-bold text-gray-500 uppercase">Actual Sheets Consumed</Label>
-                            <Input 
-                              type="number" 
-                              value={item.quantityUsed === 0 ? '' : item.quantityUsed} 
-                              onChange={e => handleItemChange(index, 'quantityUsed', e.target.value === '' ? 0 : Number(e.target.value))} 
-                              onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                              required={!formData.isJoint}
-                              placeholder="sheets"
-                              className="bg-gray-50 border-gray-200 h-9"
-                            />
-                          </div>
-                        </div>
+                            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-2 border-t border-gray-100 items-center">
+                              <div className="md:col-span-5 flex items-center gap-2">
+                                <input 
+                                  type="checkbox" 
+                                  id={`edit-calc-${index}`}
+                                  checked={isAuto}
+                                  onChange={e => handleItemChange(index, 'autoCalculate', e.target.checked)}
+                                  className="h-4 w-4 rounded border-gray-300 text-[#5A5A40] focus:ring-0 cursor-pointer"
+                                />
+                                <Label htmlFor={`edit-calc-${index}`} className="text-xs text-gray-600 font-semibold cursor-pointer select-none">Auto Calculate sheets required</Label>
+                              </div>
+
+                              <div className="md:col-span-3 py-1 px-2.5 bg-gray-50 rounded-xl border border-gray-100 text-center">
+                                <span className="text-[9px] font-bold text-gray-400 uppercase block">Sheets Required</span>
+                                <span className="font-mono text-xs font-bold text-gray-800">
+                                  {isAuto ? (item.calculatedSheets || 0).toLocaleString() : 'N/A'}
+                                </span>
+                              </div>
+
+                              <div className="md:col-span-4 space-y-1">
+                                <Label className="text-xs font-bold text-gray-500 uppercase">Actual Sheets Consumed</Label>
+                                <Input 
+                                  type="number" 
+                                  value={item.quantityUsed === 0 ? '' : item.quantityUsed} 
+                                  onChange={e => handleItemChange(index, 'quantityUsed', e.target.value === '' ? 0 : Number(e.target.value))} 
+                                  onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                                  required={!formData.isJoint}
+                                  placeholder="sheets"
+                                  className="bg-gray-50 border-gray-200 h-9"
+                                />
+                              </div>
+                            </div>
+                          </>
+                        )}
                         {!!item.isJoint && item.paperRef && (
                           <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 md:bg-amber-50/70 border border-amber-100 text-[11px] text-amber-800 rounded-lg">
                             <span className="font-semibold font-mono bg-amber-200/60 px-1 py-0.5 rounded">Joint Job Reference: #{item.paperRef}</span>
@@ -3907,7 +4032,7 @@ export function JobManagement() {
               {(() => {
                 let paperTotal = 0;
                 formData.selectedItems.forEach(item => {
-                  const isAuto = item.autoCalculate !== undefined ? item.autoCalculate : true;
+                  const isAuto = !formData.isJoint ? false : (item.autoCalculate !== undefined ? item.autoCalculate : true);
                   const billingSheets = isAuto ? (item.calculatedSheets || 0) : (item.quantityUsed || 0);
                   paperTotal += (billingSheets / 500) * (item.rate || 0);
                 });
