@@ -1354,7 +1354,6 @@ export function JobManagement() {
                 <div className="space-y-2">
                   <Label htmlFor="orderedQuantity" className="flex items-center gap-1">
                     <span>Ordered Finished Product Quantity</span>
-                    <span className="text-red-500 font-bold">*</span>
                   </Label>
                   <Input 
                     id="orderedQuantity" 
@@ -1362,7 +1361,6 @@ export function JobManagement() {
                     placeholder="e.g. 10000" 
                     value={formData.orderedQuantity} 
                     onChange={e => handleOrderedQuantityChange(e.target.value)} 
-                    required
                   />
                 </div>
                 <div className="space-y-3 p-4 bg-gray-50 rounded-2xl border border-gray-200 mt-3 shadow-xs">
@@ -3032,7 +3030,6 @@ export function JobManagement() {
                 <div className="space-y-2">
                   <Label htmlFor="edit-orderedQuantity" className="flex items-center gap-1">
                     <span>Ordered Finished Product Quantity</span>
-                    <span className="text-red-500 font-bold">*</span>
                   </Label>
                   <Input 
                     id="edit-orderedQuantity" 
@@ -3040,7 +3037,6 @@ export function JobManagement() {
                     placeholder="e.g. 10000" 
                     value={formData.orderedQuantity} 
                     onChange={e => handleOrderedQuantityChange(e.target.value)} 
-                    required
                   />
                 </div>
                 <div className="space-y-3 p-4 bg-gray-50 rounded-2xl border border-gray-200 mt-3 shadow-xs">
