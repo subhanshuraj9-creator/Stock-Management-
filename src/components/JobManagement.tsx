@@ -1782,26 +1782,7 @@ export function JobManagement() {
                                 placeholder="Choose paper..."
                               />
                             </div>
-
-                            <div className="md:col-span-3 space-y-1.5">
-                              <Label className="text-xs font-bold text-gray-500 uppercase">Rate/500 shs (₹)</Label>
-                              <Input 
-                                type="number" 
-                                step="any"
-                                placeholder="0.00"
-                                value={item.rate === 0 ? '' : item.rate} 
-                                onChange={e => handleItemChange(index, 'rate', e.target.value === '' ? 0 : Number(e.target.value))} 
-                                onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                                required 
-                                className="bg-gray-50 border-gray-200 h-9"
-                              />
-                              {item.rate ? (
-                                <p className="text-[10px] text-sky-700 font-mono italic mt-0.5">
-                                  ≈ ₹{((item.rate || 0) / 500).toFixed(4)}/sheet
-                                </p>
-                              ) : null}
-                            </div>
-
+                            
                             <div className="md:col-span-3 space-y-1.5">
                               <Label className="text-xs font-bold text-gray-500 uppercase">Actual Sheets Used</Label>
                               <Input 
@@ -1874,25 +1855,42 @@ export function JobManagement() {
                                 <Label htmlFor={`calc-${index}`} className="text-xs text-gray-600 font-semibold cursor-pointer select-none">Auto Calculate sheets required</Label>
                               </div>
 
-                              <div className="md:col-span-3 py-1 px-2.5 bg-gray-50 rounded-xl border border-gray-100 text-center">
-                                <span className="text-[9px] font-bold text-gray-400 uppercase block">Sheets Required</span>
-                                <span className="font-mono text-xs font-bold text-gray-800">
-                                  {isAuto ? (item.calculatedSheets || 0).toLocaleString() : 'N/A'}
-                                </span>
-                              </div>
+                             <div className="md:col-span-4 space-y-1">
+  <Label className="text-xs font-bold text-gray-500 uppercase">
+    Actual Sheets Used
+  </Label>
 
-                              <div className="md:col-span-4 space-y-1">
-                                <Label className="text-xs font-bold text-gray-500 uppercase">Actual Sheets Consumed</Label>
-                                <Input 
-                                  type="number" 
-                                  value={item.quantityUsed === 0 ? '' : item.quantityUsed} 
-                                  onChange={e => handleItemChange(index, 'quantityUsed', e.target.value === '' ? 0 : Number(e.target.value))} 
-                                  onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                                  required={!formData.isJoint}
-                                  placeholder="sheets"
-                                  className="bg-gray-50 border-gray-200 h-9"
-                                />
-                              </div>
+  <Input
+    type="number"
+    value={item.quantityUsed === 0 ? '' : item.quantityUsed}
+    onChange={e =>
+      handleItemChange(
+        index,
+        'quantityUsed',
+        e.target.value === '' ? 0 : Number(e.target.value)
+      )
+    }
+    onFocus={e => {
+      if (e.target.value === '0') e.target.select();
+    }}
+    required={!formData.isJoint}
+    placeholder="sheets"
+    className="bg-gray-50 border-gray-200 h-9"
+  />
+</div>
+
+<div className="md:col-span-3 space-y-1">
+  <Label className="text-xs font-bold text-gray-500 uppercase">
+    Allocated Paper
+  </Label>
+
+  <Input
+    value={(item.allocatedPaper || 0).toLocaleString()}
+    readOnly
+    placeholder="Auto Calculated"
+    className="bg-green-50 border-green-200 h-9 font-semibold text-green-700"
+  />
+</div>
                             </div>
                           </>
                         )}
