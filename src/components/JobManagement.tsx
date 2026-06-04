@@ -620,7 +620,6 @@ export function JobManagement() {
     
     const mergedItem = { ...newItems[index], ...update };
     
-  else {
       // Always calculate sheets required for individual jobs based on their orderedQuantity and ups
        const actualSheets =
     Number(
@@ -631,7 +630,6 @@ export function JobManagement() {
 
   mergedItem.allocatedPaper = actualSheets;
 
-}
     
     // Auto-detect matching paper stock actual usage if this is a joint job and stock selection changes
     if ((formData as any).isJoint && (formData as any).jointRef && field === 'stockId' && value) {
