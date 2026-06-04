@@ -2359,7 +2359,6 @@ if ((formData as any).isJoint) {
                           <span className="text-right font-mono text-[#A8201A]">₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       </div>
-                    </div>
                   );
                 }
                 return null;
