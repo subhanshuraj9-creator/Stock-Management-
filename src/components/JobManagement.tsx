@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from './ui/dialog';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { Plus, Search, FileText, Calendar, User, ChevronRight, Edit2, Trash2, Truck, Inbox, CheckCircle2, PackageCheck, Download, Eye, Image as ImageIcon, Printer } from 'lucide-react';
+import { Plus, Search, FileText, Calendar, User, Edit2, Trash2, Truck, Inbox, CheckCircle2, Download, Printer } from 'lucide-react';
 import { Badge } from './ui/badge';
 import { InvoiceModal } from './InvoiceModal';
 import { JobPreviewModal } from './JobPreviewModal';
@@ -1342,8 +1342,10 @@ if ((formData as any).isJoint) {
             } as any);
           }
         }}>
-          <DialogTrigger render={<Button className="bg-[#5A5A40] hover:bg-[#4A4A30] rounded-full px-6 w-full sm:w-auto h-12 md:h-10" />}>
-            <Plus className="mr-2 h-4 w-4" /> Create New Job
+          <DialogTrigger asChild>
+            <Button className="bg-[#5A5A40] hover:bg-[#4A4A30] rounded-full px-6 w-full sm:w-auto h-12 md:h-10">
+              <Plus className="mr-2 h-4 w-4" /> Create New Job
+            </Button>
           </DialogTrigger>
           <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -2362,7 +2364,7 @@ if ((formData as any).isJoint) {
                 }
                 return null;
               })()}
-
+	      </div>
               <DialogFooter>
                 <Button type="submit" className="bg-[#5A5A40] hover:bg-[#4A4A30] w-full h-12 rounded-full text-lg">
                   Confirm Job & Update Stock
@@ -4001,6 +4003,7 @@ if ((formData as any).isJoint) {
             </form>
           </DialogContent>
         </Dialog>
+       )}
 
       {isDispatchDialogOpen && selectedJobForDispatch && (
         <Dialog open={isDispatchDialogOpen} onOpenChange={(open) => {
@@ -4228,10 +4231,13 @@ if ((formData as any).isJoint) {
         </Dialog>
       )}
 
-      <datalist id="active-jobs-list">
+   <datalist id="active-jobs-list">
         {jobs.map(j => (
           <option key={j.id} value={j.id.slice(-4).toUpperCase()}>
             {`Job #${j.id.slice(-4).toUpperCase()} — ${j.clientName} (${j.jobDescription})`}
           </option>
         ))}
       </datalist>
+    </div>
+  );
+}
