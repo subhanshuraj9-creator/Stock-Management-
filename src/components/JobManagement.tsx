@@ -3993,33 +3993,6 @@ if ((formData as any).isJoint) {
                 </div>
               </div>
 
-              {/* Live Cost Calculation Summary Badge in Edit Job modal */}
-              {(() => {
-                let paperTotal = 0;
-                formData.selectedItems.forEach(item => {
-                  const isAuto = !formData.isJoint ? false : (item.autoCalculate !== undefined ? item.autoCalculate : true);
-                  const billingSheets = isAuto ? (item.calculatedSheets || 0) : (item.quantityUsed || 0);
-                  paperTotal += (billingSheets / 500) * (item.rate || 0);
-                });
-
-                let plateTotal = 0;
-                formData.platesUsed.forEach(plate => {
-                  plateTotal += (plate.count || 0) * (plate.rate || 0);
-                });
-
-                let processTotal = 0;
-                formData.processCharges.forEach(pc => {
-                  processTotal += (pc.amount || 0);
-                });
-
-                let laminationTotal = 0;
-                if (formData.lamination?.halfEnabled) {
-                  laminationTotal += (formData.lamination.halfQty || 0) * (formData.lamination.halfRate || 0);
-                }
-                if (formData.lamination?.fullEnabled) {
-                  laminationTotal += (formData.lamination.fullQty || 0) * (formData.lamination.fullRate || 0);
-                }
-
                             <DialogFooter>
                 <Button type="submit" className="bg-[#5A5A40] hover:bg-[#4A4A30] w-full h-12 rounded-full text-lg">
                   Update Job & Reconcile Stock
