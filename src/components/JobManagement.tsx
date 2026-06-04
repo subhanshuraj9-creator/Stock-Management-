@@ -619,8 +619,6 @@ export function JobManagement() {
     let update: any = { [field]: value };
     
     const mergedItem = { ...newItems[index], ...update };
-    
-      // Always calculate sheets required for individual jobs based on their orderedQuantity and ups
        const actualSheets =
     Number(
       field === 'quantityUsed'
