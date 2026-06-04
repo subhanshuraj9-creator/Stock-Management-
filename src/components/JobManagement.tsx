@@ -3196,18 +3196,7 @@ if ((formData as any).isJoint) {
                     </div>
                   )}
                 </div>
-                <div className="flex items-center gap-2 py-2 px-3 bg-amber-50 rounded-xl border border-amber-100 mt-2">
-                  <input 
-                    id="edit-ignoreStockLimits"
-                    type="checkbox" 
-                    checked={!!(formData as any).ignoreStockLimits} 
-                    onChange={e => setFormData({...formData, ignoreStockLimits: e.target.checked} as any)}
-                    className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-0 cursor-pointer"
-                  />
-                  <Label htmlFor="edit-ignoreStockLimits" className="text-xs text-amber-800 font-semibold cursor-pointer select-none">Bypass Stock Validation (Allow negative stock)</Label>
-                </div>
-              </div>
-
+               
               {formData.isRepeat && (
                 <div className="p-5 bg-emerald-50/50 rounded-2xl border border-emerald-100/70 space-y-4 mb-3">
                   <h4 className="font-serif text-sm font-semibold text-emerald-950 flex items-center gap-1.5">
@@ -3630,28 +3619,7 @@ if ((formData as any).isJoint) {
                           </div>
                         )}
 
-                        {/* Calculated rates display for single item */}
-                        {(() => {
-                          const billingSheets = isAuto ? (item.calculatedSheets || 0) : (item.quantityUsed || 0);
-                          const ratePerSheet = (item.rate || 0) / 500;
-                          const paperCost = (billingSheets / 500) * (item.rate || 0);
-                          if (item.rate || billingSheets) {
-                            return (
-                              <div className="p-3 bg-sky-50/40 border border-sky-100 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs text-sky-900 font-mono">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-sky-500"></span>
-                                  <span className="font-serif font-semibold text-sky-950">Calculated Paper Price:</span>
-                                </div>
-                                <div className="flex flex-wrap gap-x-4 gap-y-1">
-                                  <span>Unit Cost: <strong className="font-bold">₹{ratePerSheet.toFixed(4)}</strong>/sheet</span>
-                                  <span>Total: <strong className="font-extrabold text-sky-950 underline">₹{paperCost.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> for {billingSheets.toLocaleString()} shs</span>
-                                </div>
-                              </div>
-                            );
-                          }
-                          return null;
-                        })()}
-                      </div>
+                                         </div>
                     );
                   })}
                 </div>
