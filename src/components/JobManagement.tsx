@@ -2372,8 +2372,6 @@ if ((formData as any).isJoint) {
             </form>
           </DialogContent>
         </Dialog>
-        </div>
-      </div>
 
       <Card className="border-none shadow-sm bg-white rounded-[20px] md:rounded-[24px] overflow-hidden">
         <CardHeader className="p-4 md:p-6 border-b border-gray-100 bg-gray-50/50">
