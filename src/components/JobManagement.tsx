@@ -4001,7 +4001,6 @@ if ((formData as any).isJoint) {
             </form>
           </DialogContent>
         </Dialog>
-      )}
 
       {isDispatchDialogOpen && selectedJobForDispatch && (
         <Dialog open={isDispatchDialogOpen} onOpenChange={(open) => {
