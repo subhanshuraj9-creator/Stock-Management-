@@ -15,13 +15,11 @@ export interface StockItem {
 
 export interface JobItem {
   stockId: string;
-  quantityUsed: number; // Actual Sheets Consumed
-  rate?: number; // Rate per sheet/unit for ledger billing
-  ups?: number; // Matter Per Sheet (Ups)
-  autoCalculate?: boolean; // Whether sheets required is auto-calculated
-  calculatedSheets?: number; // Calculated Sheets Required
-  isJoint?: boolean; // If true: no stock deduction! Shared across parties
-  paperRef?: string; // Reference of joint paper to link jobs
+  quantityUsed: number;
+  ups?: number;
+  allocatedPaper?: number;
+  isJoint?: boolean;
+  paperRef?: string;
 }
 
 export interface Job {
