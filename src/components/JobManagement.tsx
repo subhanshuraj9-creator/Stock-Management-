@@ -618,38 +618,21 @@ export function JobManagement() {
     const newItems = [...formData.selectedItems];
     let update: any = { [field]: value };
     
-    if (field === 'stockId' && value) {
-      const selectedStock = stocks.find(s => s.id === value);
-      if (selectedStock) {
-        update.rate = selectedStock.defaultRate || 0;
-      }
-    }
-
-    if (field === 'quantityUsed') {
-      update.autoCalculate = false;
-    }
-    
     const mergedItem = { ...newItems[index], ...update };
     
-    if (!formData.isJoint) {
-      mergedItem.autoCalculate = false;
-      mergedItem.calculatedSheets = undefined;
-      mergedItem.ups = undefined;
-    } else {
+  else {
       // Always calculate sheets required for individual jobs based on their orderedQuantity and ups
-      const ordered = Number(formData.orderedQuantity) || 0;
-      const upsVal = Number(mergedItem.ups) || 1;
-      const calculated = upsVal > 0 ? Math.ceil(ordered / upsVal) : 0;
-      mergedItem.calculatedSheets = calculated;
-      
-      // Physical sheet consumption is only equal to calculated requirement if not joint paper
-      if (mergedItem.autoCalculate && !mergedItem.isJoint) {
-        if (field === 'ups' || field === 'autoCalculate' || mergedItem.quantityUsed === 0) {
-          mergedItem.quantityUsed = calculated;
-        }
-      }
-    }
+       const actualSheets =
+    Number(
+      field === 'quantityUsed'
+        ? value
+        : mergedItem.quantityUsed
+    ) || 0;
 
+  mergedItem.allocatedPaper = actualSheets;
+
+}
+    
     // Auto-detect matching paper stock actual usage if this is a joint job and stock selection changes
     if ((formData as any).isJoint && (formData as any).jointRef && field === 'stockId' && value) {
       const cleanRef = (formData as any).jointRef.trim().toUpperCase().replace('#', '');
@@ -663,7 +646,34 @@ export function JobManagement() {
         }
       }
     }
-    
+   // Calculate Allocated Paper for Joint Jobs
+if ((formData as any).isJoint) {
+
+  const jointItems = [...newItems];
+
+  const totalWeight = jointItems.reduce((sum, item) => {
+    return sum + (
+      (Number(item.quantityUsed) || 0) *
+      (Number(item.ups) || 1)
+    );
+  }, 0);
+
+  jointItems.forEach(item => {
+
+    const theoretical =
+      (Number(item.quantityUsed) || 0) *
+      (Number(item.ups) || 1);
+
+    item.allocatedPaper =
+      totalWeight > 0
+        ? Math.round(
+            (theoretical / totalWeight) *
+            (Number(item.quantityUsed) || 0)
+          )
+        : 0;
+  });
+
+} 
     newItems[index] = mergedItem;
     setFormData({ ...formData, selectedItems: newItems });
   };
@@ -3596,13 +3606,6 @@ export function JobManagement() {
                                   className="h-4 w-4 rounded border-gray-300 text-[#5A5A40] focus:ring-0 cursor-pointer"
                                 />
                                 <Label htmlFor={`edit-calc-${index}`} className="text-xs text-gray-600 font-semibold cursor-pointer select-none">Auto Calculate sheets required</Label>
-                              </div>
-
-                              <div className="md:col-span-3 py-1 px-2.5 bg-gray-50 rounded-xl border border-gray-100 text-center">
-                                <span className="text-[9px] font-bold text-gray-400 uppercase block">Sheets Required</span>
-                                <span className="font-mono text-xs font-bold text-gray-800">
-                                  {isAuto ? (item.calculatedSheets || 0).toLocaleString() : 'N/A'}
-                                </span>
                               </div>
 
                               <div className="md:col-span-4 space-y-1">
