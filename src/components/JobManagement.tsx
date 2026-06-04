@@ -2363,7 +2363,6 @@ if ((formData as any).isJoint) {
                 }
                 return null;
               })()}
-	      </div>
               <DialogFooter>
                 <Button type="submit" className="bg-[#5A5A40] hover:bg-[#4A4A30] w-full h-12 rounded-full text-lg">
                   Confirm Job & Update Stock
