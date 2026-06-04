@@ -3989,7 +3989,8 @@ if ((formData as any).isJoint) {
                         </div>
                       </div>
                     );
-                </div>
+          })}     
+          </div>
               </div>
 
                             <DialogFooter>
