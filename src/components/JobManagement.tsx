@@ -4020,37 +4020,7 @@ if ((formData as any).isJoint) {
                   laminationTotal += (formData.lamination.fullQty || 0) * (formData.lamination.fullRate || 0);
                 }
 
-                const grandTotal = paperTotal + plateTotal + processTotal + laminationTotal;
-
-                if (grandTotal > 0) {
-                  return (
-                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-2 mb-3">
-                      <span className="text-[11px] font-bold text-slate-500 uppercase tracking-widest block font-mono">Live Billing Estimation</span>
-                      <div className="grid grid-cols-2 gap-y-1.5 text-xs text-slate-700 font-mono">
-                        <span>Paper Stock (Total):</span>
-                        <span className="text-right font-semibold">₹{paperTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        <span>Plates & screen (Total):</span>
-                        <span className="text-right font-semibold">₹{plateTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        <span>Process charges:</span>
-                        <span className="text-right font-semibold">₹{processTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        {(formData.lamination?.halfEnabled || formData.lamination?.fullEnabled) && (
-                          <>
-                            <span>Lamination charges:</span>
-                            <span className="text-right font-semibold">₹{laminationTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                          </>
-                        )}
-                        <div className="col-span-2 border-t border-slate-200 pt-1.5 flex justify-between items-center text-sm font-bold text-slate-900 font-serif">
-                          <span>Total Estimated Cost:</span>
-                          <span className="text-right font-mono text-[#A8201A]">₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }
-                return null;
-              })()}
-
-              <DialogFooter>
+                            <DialogFooter>
                 <Button type="submit" className="bg-[#5A5A40] hover:bg-[#4A4A30] w-full h-12 rounded-full text-lg">
                   Update Job & Reconcile Stock
                 </Button>
