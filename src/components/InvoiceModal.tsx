@@ -192,12 +192,9 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
   if (!job) return null;
 
   // Calculate totals
-  const papersTotal = job.items.reduce((sum, item) => {
-    const hasAutoCalculated = (item.ups !== undefined && item.ups > 0 && job.orderedQuantity && job.orderedQuantity > 0);
-    const billingSheets = hasAutoCalculated 
-      ? Math.ceil(job.orderedQuantity / (item.ups || 1)) 
-      : (item.calculatedSheets !== undefined ? item.calculatedSheets : (item.isJoint ? 0 : item.quantityUsed));
-    return sum + (((billingSheets || 0) / 500) * (item.rate || 0));
+  const papersTotal = (job.items || []).reduce((sum, item) => {
+    const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
+    return sum + (sheetsUsed * (item.paperRate || 0));
   }, 0);
   const platesTotal = resolvedPlates.reduce((sum, plate) => sum + ((plate.count || 0) * (plate.rate || 0)), 0);
   const processesTotal = (job.processCharges || []).reduce((sum, pc) => sum + (pc.amount || 0), 0);
@@ -229,30 +226,27 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
 
     const paperRows = job.items.map(item => {
       const stock = stocks.find(s => s.id === item.stockId);
-      const hasAutoCalculated = (item.ups !== undefined && item.ups > 0 && job.orderedQuantity && job.orderedQuantity > 0);
-      const billingSheets = hasAutoCalculated 
-        ? Math.ceil(job.orderedQuantity / (item.ups || 1)) 
-        : (item.calculatedSheets !== undefined ? item.calculatedSheets : (item.isJoint ? 0 : item.quantityUsed));
-      const total = ((billingSheets || 0) / 500) * (item.rate || 0);
+      const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
+      const totalCost = sheetsUsed * (item.paperRate || 0);
       return `
         <tr>
           <td style="padding: 10px; border-bottom: 1px solid var(--border-color); font-size: 13px;">
             <div style="font-weight: 600; color: #1a202c;">${stock?.name || 'Stock Material'}</div>
           </td>
           <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace;">
-            ${billingSheets}
-            ${hasAutoCalculated ? ` <div style="color:#718096; font-size: 9px; margin-top: 2px;">(Calculated of ${job.orderedQuantity || 0} qty / ${item.ups || 1} ups)</div>` : ''}
+            ${sheetsUsed.toLocaleString()}
           </td>
-          <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace;">₹${(item.rate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })} <span style="font-size: 10px; color: #718096;">/500 shs</span></td>
-          <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-weight: bold; font-family: monospace;">₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace;">₹${(item.paperRate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-weight: bold; font-family: monospace;">₹${totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
         </tr>
       `;
     }).join('');
 
-    const plateRows = resolvedPlates.map(plate => {
+    const plateRows = resolvedPlates.map((plate, idx) => {
       const stock = stocks.find(s => s.id === plate.plateId);
       const total = (plate.count || 0) * (plate.rate || 0);
-      const isAdditional = (job.isJoint || (job.jointRef && job.jointRef.trim() !== '')) && !plate.isJoint && !plate.isJointRef;
+      const isDefaultPlate = idx === 0;
+      const isAdditional = !isDefaultPlate && !!plate.isAdditionalPlate;
       const displayName = isAdditional ? `${stock?.name || 'Printing Plate'} (Additional Plate)` : (stock?.name || 'Printing Plate');
       return `
         <tr>
@@ -445,9 +439,13 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
             justify-content: space-between;
             align-items: flex-end;
           }
+          @page {
+            size: auto;
+            margin: 0mm;
+          }
           @media print {
             body {
-              padding: 0;
+              padding: 15mm 20mm !important;
             }
             .invoice-container {
               border: none;
@@ -481,9 +479,7 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
             <div class="invoice-titling" style="${headerMode === 'letterhead' ? 'margin-top: -10px;' : ''}">
               <h2>INVOICE</h2>
               <div style="font-size: 13px;">
-                <strong>Invoice No:</strong> ${pressDetails.invoicePrefix}${job.id.slice(-6).toUpperCase()}<br/>
-                <strong>Date:</strong> ${format(job.date, 'dd MMM yyyy')}<br/>
-                <strong>Time:</strong> ${format(job.date, 'hh:mm a')}
+                <strong>Invoice No:</strong> ${pressDetails.invoicePrefix}${job.id.slice(-6).toUpperCase()}
               </div>
             </div>
           </div>
@@ -607,30 +603,27 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
 
     const paperRows = job.items.map(item => {
       const stock = stocks.find(s => s.id === item.stockId);
-      const hasAutoCalculated = (item.ups !== undefined && item.ups > 0 && job.orderedQuantity && job.orderedQuantity > 0);
-      const billingSheets = hasAutoCalculated 
-        ? Math.ceil(job.orderedQuantity / (item.ups || 1)) 
-        : (item.calculatedSheets !== undefined ? item.calculatedSheets : (item.isJoint ? 0 : item.quantityUsed));
-      const total = ((billingSheets || 0) / 500) * (item.rate || 0);
+      const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
+      const totalCost = sheetsUsed * (item.paperRate || 0);
       return `
         <tr>
           <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; font-size: 13.5px;">
             <div style="font-weight: 600; color: #2d3748;">${stock?.name || 'Stock Material'}</div>
           </td>
           <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#4a5568;">
-            ${billingSheets}
-            ${hasAutoCalculated ? ` <span style="color:#718096; font-size: 10px;">(Calculated of ${job.orderedQuantity || 0} qty / ${item.ups || 1} ups)</span>` : ''}
+            ${sheetsUsed.toLocaleString()}
           </td>
-          <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#4a5568;">₹${(item.rate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })} <span style="font-size: 9.5px; color:#718096;">/500 shs</span></td>
-          <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-weight: bold; font-family: Menlo, Monaco, monospace; color:#1a202c;">₹${total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#4a5568;">₹${(item.paperRate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-weight: bold; font-family: Menlo, Monaco, monospace; color:#1a202c;">₹${totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
         </tr>
       `;
     }).join('');
 
-    const plateRows = resolvedPlates.map(plate => {
+    const plateRows = resolvedPlates.map((plate, idx) => {
       const stock = stocks.find(s => s.id === plate.plateId);
       const total = (plate.count || 0) * (plate.rate || 0);
-      const isAdditional = (job.isJoint || (job.jointRef && job.jointRef.trim() !== '')) && !plate.isJoint && !plate.isJointRef;
+      const isDefaultPlate = idx === 0;
+      const isAdditional = !isDefaultPlate && !!plate.isAdditionalPlate;
       const displayName = isAdditional ? `${stock?.name || 'Printing Plate'} (Additional Plate)` : (stock?.name || 'Printing Plate');
       return `
         <tr>
@@ -889,17 +882,21 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
           .action-btn:hover {
             background-color: #4a4a30;
           }
+          @page {
+            size: auto;
+            margin: 0mm;
+          }
           @media print {
             body {
               background: #fff;
-              padding: 0;
+              padding: 15mm 20mm !important;
             }
             .card {
               border: none;
               box-shadow: none;
             }
             .pad-wrapper {
-              padding: 20px;
+              padding: 0;
             }
             .action-panel {
               display: none;
@@ -932,7 +929,6 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                 <h2 class="inv-heavy">INVOICE</h2>
                 <div class="inv-details">
                   Invoice No: <strong>${pressDetails.invoicePrefix}${job.id.slice(-6).toUpperCase()}</strong><br>
-                  Date: <strong>${format(job.date, 'dd MMM yyyy')}</strong><br>
                   Settlement Method: Ledger Statement
                 </div>
               </div>
@@ -1130,33 +1126,6 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900">Invoice Style Layout</Label>
-              <select
-                value={layoutTheme}
-                onChange={e => updateLayoutSetting('pdf_layout_theme', e.target.value)}
-                className="w-full bg-white h-9 text-xs rounded-lg border border-gray-200 px-2 cursor-pointer focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-              >
-                <option value="classic">Classic Georgia / Royal</option>
-                <option value="modern">Modern Sans / Corporate</option>
-                <option value="elegant">Elegant Playfair / Minimal</option>
-                <option value="compact">Compact Mono / Technical</option>
-              </select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900">Accent Theme Color</Label>
-              <select
-                value={accentColor}
-                onChange={e => updateLayoutSetting('pdf_accent_color', e.target.value)}
-                className="w-full bg-white h-9 text-xs rounded-lg border border-gray-200 px-2 cursor-pointer focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-              >
-                <option value="original">Original Olive / Khaki</option>
-                <option value="blue">Deep Corporate Blue</option>
-                <option value="green">Emerald Green</option>
-                <option value="crimson">Crimson Red</option>
-                <option value="charcoal">Slate Charcoal</option>
-              </select>
-            </div>
-            <div className="space-y-1">
               <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900">Header Mode / Blank Space</Label>
               <select
                 value={headerMode}
@@ -1217,8 +1186,7 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                 <div className="text-right">
                   <span style={{ backgroundColor: activeColor.light, color: activeColor.primary }} className="text-xs uppercase font-extrabold tracking-widest px-2 py-0.5 rounded">Statement</span>
                   <p className="font-mono text-[10px] text-gray-500 mt-1">
-                    Inv #: <span className="font-semibold">{pressDetails.invoicePrefix}{job.id.slice(-6).toUpperCase()}</span><br />
-                    Date: {format(job.date, 'dd MMM yyyy')}
+                    Inv #: <span className="font-semibold">{pressDetails.invoicePrefix}{job.id.slice(-6).toUpperCase()}</span>
                   </p>
                 </div>
               </div>
@@ -1245,11 +1213,8 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
               <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
                 {job.items.map((item, idx) => {
                   const stock = stocks.find(s => s.id === item.stockId);
-                  const hasAutoCalculated = (item.ups !== undefined && item.ups > 0 && job.orderedQuantity && job.orderedQuantity > 0);
-                  const billingSheets = hasAutoCalculated 
-                    ? Math.ceil(job.orderedQuantity / (item.ups || 1)) 
-                    : (item.calculatedSheets !== undefined ? item.calculatedSheets : (item.isJoint ? 0 : item.quantityUsed));
-                  const total = ((billingSheets || 0) / 500) * (item.rate || 0);
+                  const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
+                  const totalCost = sheetsUsed * (item.paperRate || 0);
                   return (
                     <div key={`p-idx-${idx}`} className="flex justify-between items-start text-xs font-sans py-1 hover:bg-gray-50 rounded px-1">
                       <div>
@@ -1257,16 +1222,13 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                           {stock?.name || 'Stock Material'}
                         </span>
                         <div className="text-[10px] text-gray-400">
-                          {billingSheets} sheets{' '}
-                          {hasAutoCalculated ? (
-                            <span className="text-amber-700 font-semibold">(calculated of {job.orderedQuantity || 0} qty / {item.ups || 1} ups)</span>
-                          ) : (
-                            <span>(actual)</span>
-                          )}
-                          {' '}@ ₹{(item.rate || 0).toFixed(2)}/500 shs
+                          {sheetsUsed.toLocaleString()} sheets (used/allocated)
                         </div>
                       </div>
-                      <span className="font-mono font-semibold text-gray-900">₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                      <div className="text-right">
+                        <span className="font-mono font-semibold text-gray-900">₹{totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                        <div className="text-[10px] text-gray-400">@ ₹{(item.paperRate || 0).toLocaleString('en-IN')}</div>
+                      </div>
                     </div>
                   );
                 })}
@@ -1275,7 +1237,8 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                 {resolvedPlates.map((plate, idx) => {
                   const stock = stocks.find(s => s.id === plate.plateId);
                   const total = (plate.count || 0) * (plate.rate || 0);
-                  const isAdditional = (job.isJoint || (job.jointRef && job.jointRef.trim() !== '')) && !plate.isJoint && !plate.isJointRef;
+                  const isDefaultPlate = idx === 0;
+                  const isAdditional = !isDefaultPlate && !!plate.isAdditionalPlate;
                   return (
                     <div key={`pl-idx-${idx}`} className="flex justify-between items-start text-xs font-sans py-1 hover:bg-gray-50 rounded px-1">
                       <div>

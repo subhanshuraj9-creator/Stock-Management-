@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType, cleanUndefined } from '../firebase';
-import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, query, orderBy, runTransaction, writeBatch } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, query, orderBy, runTransaction, writeBatch, getDocs, where } from 'firebase/firestore';
 import { StockItem, StockType, InkUsage, StockHistory } from '../types';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -54,6 +54,9 @@ export function StockManagement() {
   const [stocks, setStocks] = useState<StockItem[]>([]);
   const [inkUsages, setInkUsages] = useState<InkUsage[]>([]);
   const [stockHistory, setStockHistory] = useState<StockHistory[]>([]);
+  const [jobs, setJobs] = useState<any[]>([]);
+  const [jobsLoaded, setJobsLoaded] = useState(false);
+  const [stockHistoryLoaded, setStockHistoryLoaded] = useState(false);
   const [isHistClearOpen, setIsHistClearOpen] = useState(false);
   const [histClearType, setHistClearType] = useState<StockType | null>(null);
   const [isHistClearing, setIsHistClearing] = useState(false);
@@ -166,7 +169,12 @@ export function StockManagement() {
     type: 'paper' as StockType,
     inkContainers: [] as { weight: string, count: string }[],
     defaultRate: '',
-    paperType: ''
+    paperType: '',
+    unit: 'Sheets',
+    brand: '',
+    millName: '',
+    shade: '',
+    notes: ''
   });
 
   useEffect(() => {
@@ -190,8 +198,18 @@ export function StockManagement() {
     const unsubscribeHistory = onSnapshot(historyQ, (snapshot) => {
       const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StockHistory));
       setStockHistory(items);
+      setStockHistoryLoaded(true);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'stockHistory');
+    });
+
+    const jobsQ = query(collection(db, 'jobs'), orderBy('date', 'desc'));
+    const unsubscribeJobs = onSnapshot(jobsQ, (snapshot) => {
+      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      setJobs(items);
+      setJobsLoaded(true);
+    }, (error) => {
+      console.error('Error listening to jobs:', error);
     });
 
     const sectionsQ = query(collection(db, 'paperSections'), orderBy('name', 'asc'));
@@ -214,10 +232,61 @@ export function StockManagement() {
       unsubscribe();
       unsubscribeUsage();
       unsubscribeHistory();
+      unsubscribeJobs();
       unsubscribeSections();
       unsubscribeBoardSections();
     };
   }, []);
+
+  // Helper to determine if a stockHistory item belongs to a deleted job
+  const isJobHistoryOrphan = (h: StockHistory) => {
+    const isJobRelated = h.jobId || 
+      h.notes?.toLowerCase().includes('job created') || 
+      h.notes?.toLowerCase().includes('job updated') || 
+      h.notes?.toLowerCase().includes('job deleted') ||
+      h.notes?.toLowerCase().includes('reconstructed');
+
+    if (!isJobRelated) return false;
+
+    // If jobId is present, check if jobId actually exists in the active jobs
+    if (h.jobId) {
+      return !jobs.some(j => j.id === h.jobId);
+    }
+
+    // Traditional matching for older records based on notes
+    const notesLower = (h.notes || '').toLowerCase();
+    
+    // We expect notes to have client and description, e.g., "Job created (individual stock deducted): client - description" or "Job updated: client - description"
+    const matchedAnyActive = jobs.some(j => {
+      const client = (j.clientName || '').toLowerCase().trim();
+      const desc = (j.jobDescription || '').toLowerCase().trim();
+      return client && desc && notesLower.includes(client) && notesLower.includes(desc);
+    });
+
+    return !matchedAnyActive;
+  };
+
+  // Automatic background cleanup of orphan stockHistory entries (belonging to deleted jobs)
+  useEffect(() => {
+    if (!jobsLoaded || !stockHistoryLoaded) return;
+    
+    const orphans = stockHistory.filter(isJobHistoryOrphan);
+
+    if (orphans.length > 0) {
+      console.log(`Auto-cleaning ${orphans.length} legacy stockHistory entries from deleted jobs...`);
+      const batch = writeBatch(db);
+      // Process in batches
+      const maxBatchSize = Math.min(orphans.length, 400);
+      for (let i = 0; i < maxBatchSize; i++) {
+        batch.delete(doc(db, 'stockHistory', orphans[i].id));
+      }
+      batch.commit().then(() => {
+        console.log(`Successfully purged ${maxBatchSize} orphan logs.`);
+      }).catch(err => {
+        console.error('Failed to purge orphan stock history entries:', err);
+      });
+    }
+  }, [jobs, stockHistory, jobsLoaded, stockHistoryLoaded]);
 
   const handleRecordUsage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -239,29 +308,145 @@ export function StockManagement() {
         let usageNotesMsg = '';
 
         if (selectedInk.type === 'ink') {
-          const weight = Number(usageFormData.weight);
-          const count = Number(usageFormData.count);
-          
-          const containerIndex = stockData.inkContainers?.findIndex(c => c.weight === weight);
-          if (containerIndex === undefined || containerIndex === -1) {
-            throw new Error(`No containers with weight ${weight}kg found in stock`);
+          const containerWeightInput = usageFormData.weight ? Number(usageFormData.weight) : 0;
+          const targetWeight = Number(usageFormData.quantity);
+
+          if (isNaN(targetWeight) || targetWeight <= 0) {
+            throw new Error("Please enter a valid weight in kg to deduct");
           }
 
-          if (stockData.inkContainers![containerIndex].count < count) {
-            throw new Error(`Insufficient containers. Only ${stockData.inkContainers![containerIndex].count} left.`);
+          const curContainers = stockData.inkContainers ? [...stockData.inkContainers] : [];
+          const totalStockKg = curContainers.length > 0
+            ? curContainers.reduce((sum, c) => sum + (c.weight * c.count), 0)
+            : stockData.quantity;
+
+          if (totalStockKg < targetWeight) {
+            throw new Error(`Insufficient stock. Total available: ${totalStockKg.toFixed(2)}kg, requested: ${targetWeight}kg`);
           }
 
-          const newContainers = [...stockData.inkContainers!];
-          newContainers[containerIndex] = {
-            ...newContainers[containerIndex],
-            count: newContainers[containerIndex].count - count
-          };
+          const computedCount = containerWeightInput > 0 ? Math.round(targetWeight / containerWeightInput) : 0;
+          const isExactMultiple = containerWeightInput > 0 && Math.abs(computedCount * containerWeightInput - targetWeight) < 0.001;
 
-          newTotalQuantity = newContainers.reduce((sum, c) => sum + (c.weight * c.count), 0);
-          updateData.inkContainers = newContainers;
-          updateData.quantity = newTotalQuantity;
-          deductedQuantity = weight * count;
-          usageNotesMsg = `Ink usage: ${count}x ${weight}kg. ${usageFormData.notes}`;
+          if (isExactMultiple && curContainers.length > 0) {
+            const containerIndex = curContainers.findIndex(c => Math.abs(c.weight - containerWeightInput) < 0.001);
+            if (containerIndex !== -1 && curContainers[containerIndex].count >= computedCount) {
+              curContainers[containerIndex] = {
+                ...curContainers[containerIndex],
+                count: curContainers[containerIndex].count - computedCount
+              };
+
+              const finalContainers = curContainers.filter(c => c.count > 0);
+              newTotalQuantity = finalContainers.reduce((sum, c) => sum + (c.weight * c.count), 0);
+              updateData.inkContainers = finalContainers;
+              updateData.quantity = newTotalQuantity;
+              deductedQuantity = targetWeight;
+              usageNotesMsg = `Ink usage: ${computedCount}x ${containerWeightInput}kg (${targetWeight.toFixed(2)} kg). ${usageFormData.notes}`;
+            } else {
+              // Fallback to breaking containers optimized if we don't have enough of the exact size
+              let weightNeeded = targetWeight;
+              const sortedContainers = [...curContainers].map(c => ({ ...c })).sort((a, b) => b.weight - a.weight);
+
+              for (let i = 0; i < sortedContainers.length; i++) {
+                if (weightNeeded <= 0) break;
+                const c = sortedContainers[i];
+                if (c.count <= 0) continue;
+
+                const maxCanUse = Math.floor(weightNeeded / c.weight);
+                const actualUse = Math.min(maxCanUse, c.count);
+
+                if (actualUse > 0) {
+                  c.count -= actualUse;
+                  weightNeeded -= actualUse * c.weight;
+                }
+              }
+
+              if (weightNeeded > 0) {
+                // Break a larger container
+                const sortedAsc = [...sortedContainers].sort((a, b) => a.weight - b.weight);
+                const containerToBreak = sortedAsc.find(c => c.count > 0);
+                if (containerToBreak) {
+                  containerToBreak.count -= 1;
+                  const remainingWeight = containerToBreak.weight - weightNeeded;
+                  weightNeeded = 0;
+                  if (remainingWeight > 0) {
+                    const existingIdx = sortedContainers.findIndex(c => Math.abs(c.weight - remainingWeight) < 0.001);
+                    if (existingIdx !== -1) {
+                      sortedContainers[existingIdx].count += 1;
+                    } else {
+                      sortedContainers.push({ weight: Number(remainingWeight.toFixed(3)), count: 1 });
+                    }
+                  }
+                }
+              }
+
+              if (weightNeeded > 1e-4) {
+                throw new Error("Insufficient matching containers in inventory for total weight deduction");
+              }
+
+              const finalContainers = sortedContainers.filter(c => c.count > 0);
+              newTotalQuantity = finalContainers.reduce((sum, c) => sum + (c.weight * c.count), 0);
+              
+              updateData.inkContainers = finalContainers;
+              updateData.quantity = newTotalQuantity;
+              deductedQuantity = targetWeight;
+              usageNotesMsg = `Ink usage: ${targetWeight.toLocaleString('en-IN', { maximumFractionDigits: 3 })} kg. ${usageFormData.notes}`;
+            }
+          } else {
+            if (curContainers.length === 0) {
+              newTotalQuantity = stockData.quantity - targetWeight;
+              updateData.quantity = newTotalQuantity;
+              deductedQuantity = targetWeight;
+              usageNotesMsg = `Ink usage: ${targetWeight.toLocaleString('en-IN', { maximumFractionDigits: 3 })} kg. ${usageFormData.notes}`;
+            } else {
+              let weightNeeded = targetWeight;
+              const sortedContainers = [...curContainers].map(c => ({ ...c })).sort((a, b) => b.weight - a.weight);
+
+              for (let i = 0; i < sortedContainers.length; i++) {
+                if (weightNeeded <= 0) break;
+                const c = sortedContainers[i];
+                if (c.count <= 0) continue;
+
+                const maxCanUse = Math.floor(weightNeeded / c.weight);
+                const actualUse = Math.min(maxCanUse, c.count);
+
+                if (actualUse > 0) {
+                  c.count -= actualUse;
+                  weightNeeded -= actualUse * c.weight;
+                }
+              }
+
+              if (weightNeeded > 0) {
+                // Break a larger container
+                const sortedAsc = [...sortedContainers].sort((a, b) => a.weight - b.weight);
+                const containerToBreak = sortedAsc.find(c => c.count > 0);
+                if (containerToBreak) {
+                  containerToBreak.count -= 1;
+                  const remainingWeight = containerToBreak.weight - weightNeeded;
+                  weightNeeded = 0;
+                  if (remainingWeight > 0) {
+                    const existingIdx = sortedContainers.findIndex(c => Math.abs(c.weight - remainingWeight) < 0.001);
+                    if (existingIdx !== -1) {
+                      sortedContainers[existingIdx].count += 1;
+                    } else {
+                      sortedContainers.push({ weight: Number(remainingWeight.toFixed(3)), count: 1 });
+                    }
+                  }
+                }
+              }
+
+              if (weightNeeded > 1e-4) {
+                throw new Error("Insufficient matching containers in inventory for total weight deduction");
+              }
+
+              const finalContainers = sortedContainers.filter(c => c.count > 0);
+              newTotalQuantity = finalContainers.reduce((sum, c) => sum + (c.weight * c.count), 0);
+              
+              updateData.inkContainers = finalContainers;
+              updateData.quantity = newTotalQuantity;
+              deductedQuantity = targetWeight;
+              usageNotesMsg = `Ink usage: (${targetWeight.toLocaleString('en-IN', { maximumFractionDigits: 3 })} kg). ${usageFormData.notes}`;
+            }
+          }
         } else {
           const qtyToDeduct = Number(usageFormData.quantity);
           if (isNaN(qtyToDeduct) || qtyToDeduct <= 0) {
@@ -284,9 +469,9 @@ export function StockManagement() {
         transaction.set(usageRef, cleanUndefined({
           inkId: selectedInk.id,
           date: Date.now(),
-          weight: selectedInk.type === 'ink' ? Number(usageFormData.weight) : null,
-          count: selectedInk.type === 'ink' ? Number(usageFormData.count) : null,
-          quantity: selectedInk.type !== 'ink' ? Number(usageFormData.quantity) : null,
+          weight: selectedInk.type === 'ink' ? (usageFormData.weight ? Number(usageFormData.weight) : null) : null,
+          count: selectedInk.type === 'ink' ? (usageFormData.count ? Number(usageFormData.count) : null) : null,
+          quantity: Number(usageFormData.quantity),
           stockType: selectedInk.type,
           notes: usageFormData.notes
         }));
@@ -321,10 +506,8 @@ export function StockManagement() {
       await runTransaction(db, async (transaction) => {
         const pTypeVal = formData.paperType || 'Other';
         const finalName = formData.name.trim() || (
-          formData.type === 'paper' 
-            ? `${pTypeVal} - ${formData.gsm} GSM - ${formData.size || 'Standard'}`
-            : formData.type === 'board'
-            ? `${pTypeVal} - ${formData.gsm} GSM - ${formData.size || 'Standard'}`
+          formData.type === 'paper' || formData.type === 'board'
+            ? `${pTypeVal}${formData.gsm ? ` - ${formData.gsm} GSM` : ''}${formData.size ? ` - ${formData.size || 'Standard'}` : ''}`
             : formData.type === 'plate'
             ? `Plate - ${formData.size || 'Standard'}`
             : formData.type === 'ink'
@@ -344,9 +527,16 @@ export function StockManagement() {
         }
         
         if (formData.type === 'paper' || formData.type === 'board') {
-          newStock.gsm = Number(formData.gsm);
+          if (formData.gsm) {
+            newStock.gsm = Number(formData.gsm);
+          }
           newStock.size = formData.size;
           newStock.paperType = pTypeVal;
+          newStock.unit = formData.unit || 'Sheets';
+          newStock.brand = formData.brand || '';
+          newStock.millName = formData.millName || '';
+          newStock.shade = formData.shade || '';
+          newStock.notes = formData.notes || '';
           if (formData.type === 'paper') {
             const isExisting = paperSections.some(s => s.name.toLowerCase() === pTypeVal.toLowerCase());
             if (!isExisting && pTypeVal !== 'Other' && pTypeVal.trim() !== '') {
@@ -386,7 +576,7 @@ export function StockManagement() {
       });
 
       setIsAddOpen(false);
-      setFormData({ name: '', gsm: '', size: '', quantity: '', type: 'paper', inkContainers: [], defaultRate: '', paperType: '' });
+      setFormData({ name: '', gsm: '', size: '', quantity: '', type: 'paper', inkContainers: [], defaultRate: '', paperType: '', unit: 'Sheets', brand: '', millName: '', shade: '', notes: '' });
       toast.success('Stock added successfully');
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'stocks');
@@ -409,10 +599,8 @@ export function StockManagement() {
 
         const pTypeVal = formData.paperType || 'Other';
         const finalName = formData.name.trim() || (
-          formData.type === 'paper' 
-            ? `${pTypeVal} - ${formData.gsm} GSM - ${formData.size || 'Standard'}`
-            : formData.type === 'board'
-            ? `${pTypeVal} - ${formData.gsm} GSM - ${formData.size || 'Standard'}`
+          formData.type === 'paper' || formData.type === 'board'
+            ? `${pTypeVal}${formData.gsm ? ` - ${formData.gsm} GSM` : ''}${formData.size ? ` - ${formData.size || 'Standard'}` : ''}`
             : formData.type === 'plate'
             ? `Plate - ${formData.size || 'Standard'}`
             : formData.type === 'ink'
@@ -435,9 +623,18 @@ export function StockManagement() {
         }
 
         if (formData.type === 'paper' || formData.type === 'board') {
-          updatedData.gsm = Number(formData.gsm);
+          if (formData.gsm) {
+            updatedData.gsm = Number(formData.gsm);
+          } else {
+            updatedData.gsm = null;
+          }
           updatedData.size = formData.size;
           updatedData.paperType = pTypeVal;
+          updatedData.unit = formData.unit || 'Sheets';
+          updatedData.brand = formData.brand || '';
+          updatedData.millName = formData.millName || '';
+          updatedData.shade = formData.shade || '';
+          updatedData.notes = formData.notes || '';
           if (formData.type === 'paper') {
             const isExisting = paperSections.some(s => s.name.toLowerCase() === pTypeVal.toLowerCase());
             if (!isExisting && pTypeVal !== 'Other' && pTypeVal.trim() !== '') {
@@ -983,10 +1180,11 @@ export function StockManagement() {
                       className="h-7 w-7 md:h-8 md:w-8 text-gray-400 hover:text-purple-600"
                       onClick={() => {
                         setSelectedInk(stock);
+                        const firstContainer = (stock.type === 'ink' && stock.inkContainers && stock.inkContainers.length > 0) ? stock.inkContainers[0] : null;
                         setUsageFormData({
-                          weight: stock.type === 'ink' ? (stock.inkContainers?.[0]?.weight?.toString() || '') : '',
-                          count: '',
-                          quantity: '',
+                          weight: firstContainer ? firstContainer.weight.toString() : '',
+                          count: firstContainer ? '1' : '',
+                          quantity: firstContainer ? firstContainer.weight.toString() : '',
                           notes: ''
                         });
                         setIsUsageOpen(true);
@@ -1093,7 +1291,12 @@ export function StockManagement() {
                             count: c.count.toString()
                           })) || [],
                           defaultRate: stock.defaultRate?.toString() || '',
-                          paperType: stock.paperType || ''
+                          paperType: stock.paperType || '',
+                          unit: stock.unit || 'Sheets',
+                          brand: stock.brand || '',
+                          millName: stock.millName || '',
+                          shade: stock.shade || '',
+                          notes: stock.notes || ''
                         });
                       }}
                     >
@@ -1181,10 +1384,11 @@ export function StockManagement() {
                   className="h-8 px-2.5 rounded-full text-[11px] text-purple-650 hover:bg-purple-50 shadow-2xs border-purple-200"
                   onClick={() => {
                     setSelectedInk(stock);
+                    const firstContainer = (stock.type === 'ink' && stock.inkContainers && stock.inkContainers.length > 0) ? stock.inkContainers[0] : null;
                     setUsageFormData({
-                      weight: stock.type === 'ink' ? (stock.inkContainers?.[0]?.weight?.toString() || '') : '',
-                      count: '',
-                      quantity: '',
+                      weight: firstContainer ? firstContainer.weight.toString() : '',
+                      count: firstContainer ? '1' : '',
+                      quantity: firstContainer ? firstContainer.weight.toString() : '',
                       notes: ''
                     });
                     setIsUsageOpen(true);
@@ -1288,7 +1492,12 @@ export function StockManagement() {
                         count: c.count.toString()
                       })) || [],
                       defaultRate: stock.defaultRate?.toString() || '',
-                      paperType: stock.paperType || ''
+                      paperType: stock.paperType || '',
+                      unit: stock.unit || 'Sheets',
+                      brand: stock.brand || '',
+                      millName: stock.millName || '',
+                      shade: stock.shade || '',
+                      notes: stock.notes || ''
                     });
                   }}
                 >
@@ -1344,7 +1553,14 @@ export function StockManagement() {
     const [typeFilter, setTypeFilter] = useState<'all' | 'paper' | 'board' | 'ink' | 'plate'>('all');
     const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'cost-desc' | 'cost-asc'>('date-desc');
 
-    const purchasesOnly = stockHistory.filter(h => h.type === 'addition' && !h.notes?.toLowerCase().includes('initial'));
+    const purchasesOnly = stockHistory.filter(h => 
+      h.type === 'addition' && 
+      !h.notes?.toLowerCase().includes('initial') &&
+      !h.notes?.toLowerCase().includes('deleted') &&
+      !h.notes?.toLowerCase().includes('reconstructed') &&
+      !h.notes?.toLowerCase().includes('revert') &&
+      !h.notes?.toLowerCase().includes('return')
+    );
 
     const augmentedPurchases = purchasesOnly.map(h => {
       const stock = stocks.find(s => s.id === h.stockId);
@@ -1411,7 +1627,7 @@ export function StockManagement() {
       const csvRows = [headers.join(',')];
 
       sortedPurchases.forEach(p => {
-        const dateStr = format(p.date, 'yyyy-MM-dd HH:mm');
+        const dateStr = format(p.date, 'dd-MM-yy HH:mm');
         const name = `"${(p.stock?.name || 'Deleted Stock').replace(/"/g, '""')}"`;
         const type = p.stock?.type ? p.stock.type.toUpperCase() : 'UNKNOWN';
         const qty = p.quantity;
@@ -1483,7 +1699,7 @@ export function StockManagement() {
                     {augmentedPurchases[0].stock?.name || 'Unknown Stock'}
                   </p>
                   <p className="text-[10px] text-purple-700 font-sans">
-                    {format(augmentedPurchases[0].date, 'MMM dd, yyyy')}
+                    {format(augmentedPurchases[0].date, 'dd-MM-yy')}
                   </p>
                 </>
               ) : (
@@ -1594,16 +1810,15 @@ export function StockManagement() {
                   <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider">Item Details</TableHead>
                   <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right">Quantity</TableHead>
                   <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right">Purchase Rate</TableHead>
-                  <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right">Total Cost</TableHead>
+                  <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right pr-4 md:pr-6">Total Cost</TableHead>
                   <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-center">Invoice Info</TableHead>
-                  <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right pr-4 md:pr-6">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {sortedPurchases.map(p => (
                   <TableRow key={p.id} className="group border-gray-50 hover:bg-gray-50/40 transition-colors">
                     <TableCell className="pl-4 md:pl-6 text-xs text-gray-400 font-mono">
-                      {format(p.date, 'dd-MM-yyyy')}<br />
+                      {format(p.date, 'dd-MM-yy')}<br />
                       <span className="text-[10px] text-gray-300">{format(p.date, 'HH:mm')}</span>
                     </TableCell>
                     
@@ -1636,7 +1851,7 @@ export function StockManagement() {
                       {p.rateLabel}
                     </TableCell>
 
-                    <TableCell className="text-right pr-4 font-mono font-bold text-xs md:text-sm text-emerald-600">
+                    <TableCell className="text-right pr-4 md:pr-6 font-mono font-bold text-xs md:text-sm text-emerald-600">
                       ₹{p.totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </TableCell>
 
@@ -1658,24 +1873,12 @@ export function StockManagement() {
                         <span className="text-gray-300 italic">-</span>
                       )}
                     </TableCell>
-
-                    <TableCell className="text-right pr-4 md:pr-6 whitespace-nowrap">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-8 w-8 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full"
-                        onClick={() => setPurchaseToDelete(p)}
-                        title="Delete Purchase"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
                   </TableRow>
                 ))}
                 
                 {sortedPurchases.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} className="h-28 text-center text-gray-400 italic font-serif text-sm">
+                    <TableCell colSpan={6} className="h-28 text-center text-gray-400 italic font-serif text-sm">
                       No purchase entries match your current search/filter.
                     </TableCell>
                   </TableRow>
@@ -1698,8 +1901,36 @@ export function StockManagement() {
     const [searchQuery, setSearchQuery] = useState('');
     const [typeFilter, setTypeFilter] = useState<'all' | 'paper' | 'board' | 'ink' | 'plate'>('all');
     const [sortBy, setSortBy] = useState<'date-desc' | 'date-asc' | 'qty-desc' | 'qty-asc' | 'value-desc' | 'value-asc'>('date-desc');
+    const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
+    const [isClearing, setIsClearing] = useState(false);
 
-    const usagesOnly = stockHistory.filter(h => h.type === 'usage');
+    const handleClearUsageHistory = async () => {
+      setIsClearing(true);
+      try {
+        const q = query(collection(db, 'stockHistory'), where('type', '==', 'usage'));
+        const snap = await getDocs(q);
+        if (snap.size === 0) {
+          toast.info('No usage entries found to clear.');
+          setIsClearConfirmOpen(false);
+          return;
+        }
+
+        const batch = writeBatch(db);
+        snap.forEach((docSnap) => {
+          batch.delete(docSnap.ref);
+        });
+
+        await batch.commit();
+        toast.success(`Successfully cleared all ${snap.size} usage entries!`);
+        setIsClearConfirmOpen(false);
+      } catch (err: any) {
+        toast.error(err.message || 'Failed to clear usage history');
+      } finally {
+        setIsClearing(false);
+      }
+    };
+
+    const usagesOnly = stockHistory.filter(h => h.type === 'usage' && !isJobHistoryOrphan(h));
 
     const augmentedUsages = usagesOnly.map(h => {
       const stock = stocks.find(s => s.id === h.stockId);
@@ -1776,7 +2007,7 @@ export function StockManagement() {
       const csvRows = [headers.join(',')];
 
       sortedUsages.forEach(u => {
-        const dateStr = format(u.date, 'yyyy-MM-dd HH:mm');
+        const dateStr = format(u.date, 'dd-MM-yy HH:mm');
         const name = `"${(u.stock?.name || 'Deleted Stock').replace(/"/g, '""')}"`;
         const type = u.stock?.type ? u.stock.type.toUpperCase() : 'UNKNOWN';
         const qty = u.totalQty;
@@ -1848,7 +2079,7 @@ export function StockManagement() {
                     {augmentedUsages[0].stock?.name || 'Deleted Stock'}
                   </p>
                   <p className="text-[10px] text-gray-400 font-sans">
-                    {format(augmentedUsages[0].date, 'MMM dd, yyyy')}
+                    {format(augmentedUsages[0].date, 'dd-MM-yy')}
                   </p>
                 </>
               ) : (
@@ -1947,6 +2178,8 @@ export function StockManagement() {
                 <Download size={13} />
                 <span>Export CSV</span>
               </Button>
+
+
             </div>
           </div>
         </div>
@@ -1961,15 +2194,14 @@ export function StockManagement() {
                   <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider">Item Details</TableHead>
                   <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right">Quantity Consumed</TableHead>
                   <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right">Standard Rate</TableHead>
-                  <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right">Estimated Value</TableHead>
-                  <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right pr-4 md:pr-6 whitespace-nowrap">Actions</TableHead>
+                  <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right pr-4 md:pr-6">Estimated Value</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {sortedUsages.map(u => (
                   <TableRow key={u.id} className="group border-gray-50 hover:bg-gray-50/40 transition-colors">
                     <TableCell className="pl-4 md:pl-6 text-xs text-gray-400 font-mono">
-                      {format(u.date, 'dd-MM-yyyy')}<br />
+                      {format(u.date, 'dd-MM-yy')}<br />
                       <span className="text-[10px] text-gray-300">{format(u.date, 'HH:mm')}</span>
                     </TableCell>
                     
@@ -2002,27 +2234,15 @@ export function StockManagement() {
                       {u.unitRate > 0 ? `₹${u.unitRate.toFixed(2)}` : '—'}
                     </TableCell>
 
-                    <TableCell className="text-right pr-4 font-mono font-bold text-xs md:text-sm text-purple-650">
+                    <TableCell className="text-right pr-4 md:pr-6 font-mono font-bold text-xs md:text-sm text-purple-650">
                       ₹{u.estimatedValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </TableCell>
-
-                    <TableCell className="text-right pr-4 md:pr-6 whitespace-nowrap">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-8 w-8 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full"
-                        onClick={() => setUsageToDelete(u)}
-                        title="Revert & Delete Usage Log"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
                 
                 {sortedUsages.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="h-28 text-center text-gray-400 italic font-serif text-sm">
+                    <TableCell colSpan={5} className="h-28 text-center text-gray-400 italic font-serif text-sm">
                       No usage entries match your current search/filter.
                     </TableCell>
                   </TableRow>
@@ -2037,6 +2257,27 @@ export function StockManagement() {
             </div>
           )}
         </div>
+
+        {/* Clear Confirmation Dialog */}
+        <Dialog open={isClearConfirmOpen} onOpenChange={setIsClearConfirmOpen}>
+          <DialogContent className="sm:max-w-[425px] rounded-[32px]">
+            <DialogHeader>
+              <DialogTitle className="font-serif text-2xl text-red-650">Clear Usage Summary</DialogTitle>
+            </DialogHeader>
+            <div className="py-4">
+              <p className="text-gray-600 text-sm leading-relaxed">
+                Are you sure you want to permanently clear the <strong className="text-gray-900">entire usage summary</strong> history? This will remove all material usage logs from the inventory system, but raw stock values remain unchanged. This action is irreversible.
+              </p>
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="ghost" onClick={() => setIsClearConfirmOpen(false)} className="rounded-full" disabled={isClearing}>Cancel</Button>
+              <Button onClick={handleClearUsageHistory} className="bg-red-600 hover:bg-red-700 text-white rounded-full px-6 font-serif" disabled={isClearing}>
+                {isClearing ? 'Clearing...' : 'Permanently Clear Logs'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
       </div>
     );
   };
@@ -2046,7 +2287,10 @@ export function StockManagement() {
 
     const filteredHistory = items.filter(h => {
       const stock = stocks.find(s => s.id === h.stockId);
-      return stock?.type === type;
+      const isJobReversion = h.notes?.toLowerCase().includes('deleted') || 
+                            h.notes?.toLowerCase().includes('revert') || 
+                            h.notes?.toLowerCase().includes('return');
+      return stock?.type === type && !isJobReversion && !isJobHistoryOrphan(h);
     });
 
     const displayHistory = filteredHistory.filter(h => {
@@ -2126,7 +2370,7 @@ export function StockManagement() {
                       <Badge variant="outline" className="text-[9px] font-sans font-normal py-0 px-1.5 bg-purple-50 text-purple-600 border-purple-100">Usage</Badge>
                     )}
                   </div>
-                  <p className="text-xs text-gray-400">{format(history.date, 'MMM dd, yyyy HH:mm')}</p>
+                  <p className="text-xs text-gray-400">{format(history.date, 'dd-MM-yy HH:mm')}</p>
                 </div>
                 <div className="text-left sm:text-right shrink-0 min-w-0 w-full sm:w-auto pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-50/50">
                   <p className={`font-mono text-sm font-bold ${history.quantity > 0 ? 'text-emerald-600' : 'text-red-650'}`}>
@@ -2152,7 +2396,7 @@ export function StockManagement() {
           <h2 className="text-2xl md:text-3xl font-serif font-medium text-gray-900">Inventory</h2>
           <p className="text-sm md:text-base text-gray-500 font-serif italic">Manage your printing stocks</p>
         </div>
-        {activeTab !== 'purchase_summary' && (
+        {activeTab !== 'purchase_summary' && activeTab !== 'usage_summary' && (
           <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
             <Button 
               className="bg-[#5A5A40] hover:bg-[#4A4A30] rounded-full px-6 w-full md:w-auto h-12 md:h-10"
@@ -2165,14 +2409,19 @@ export function StockManagement() {
                   type: activeTab as StockType,
                   inkContainers: activeTab === 'ink' ? [{ weight: '', count: '' }] : [],
                   defaultRate: '',
-                  paperType: ''
+                  paperType: '',
+                  unit: 'Sheets',
+                  brand: '',
+                  millName: '',
+                  shade: '',
+                  notes: ''
                 });
                 setIsAddOpen(true);
               }}
             >
               <Plus className="mr-2 h-4 w-4" /> Add New {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
             </Button>
-          <DialogContent className="sm:max-w-[425px] rounded-[32px]">
+          <DialogContent className="sm:max-w-[425px] rounded-[32px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="font-serif text-2xl">
                 Add {formData.type.charAt(0).toUpperCase() + formData.type.slice(1)} Stock
@@ -2268,16 +2517,42 @@ export function StockManagement() {
                 )}
 
                 {(formData.type === 'paper' || formData.type === 'board') && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="gsm" className="text-xs uppercase tracking-widest text-gray-400 font-bold">GSM</Label>
-                      <Input id="gsm" type="number" placeholder="e.g. 170" className="rounded-xl border-gray-200 h-12" value={formData.gsm} onChange={e => setFormData({...formData, gsm: e.target.value})} required />
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="gsm" className="text-xs uppercase tracking-widest text-gray-400 font-bold">GSM (Optional)</Label>
+                        <Input id="gsm" type="number" placeholder="e.g. 170" className="rounded-xl border-gray-200 h-12" value={formData.gsm} onChange={e => setFormData({...formData, gsm: e.target.value})} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="size" className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">Size</Label>
+                        <Input id="size" placeholder="e.g. 23x36" className="rounded-xl border-gray-200 h-12" value={formData.size} onChange={e => setFormData({...formData, size: e.target.value})} required />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="unit" className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">Unit</Label>
+                        <Input id="unit" placeholder="e.g. Sheets" className="rounded-xl border-gray-200 h-12" value={formData.unit || 'Sheets'} onChange={e => setFormData({...formData, unit: e.target.value})} required />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="brand" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Brand (Optional)</Label>
+                        <Input id="brand" placeholder="e.g. Century" className="rounded-xl border-gray-200 h-12" value={formData.brand || ''} onChange={e => setFormData({...formData, brand: e.target.value})} />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="millName" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Mill Name (Optional)</Label>
+                        <Input id="millName" placeholder="e.g. JK Mill" className="rounded-xl border-gray-200 h-12" value={formData.millName || ''} onChange={e => setFormData({...formData, millName: e.target.value})} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="shade" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Shade (Optional)</Label>
+                        <Input id="shade" placeholder="e.g. Blush Pink / Natural" className="rounded-xl border-gray-200 h-12" value={formData.shade || ''} onChange={e => setFormData({...formData, shade: e.target.value})} />
+                      </div>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="size" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Size</Label>
-                      <Input id="size" placeholder="e.g. 23x36" className="rounded-xl border-gray-200 h-12" value={formData.size} onChange={e => setFormData({...formData, size: e.target.value})} required />
+                      <Label htmlFor="notes" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Notes (Optional)</Label>
+                      <Input id="notes" placeholder="Notes about stock..." className="rounded-xl border-gray-200 h-12" value={formData.notes || ''} onChange={e => setFormData({...formData, notes: e.target.value})} />
                     </div>
-                  </div>
+                  </>
                 )}
 
                 {formData.type === 'plate' && (
@@ -2540,11 +2815,21 @@ export function StockManagement() {
             </div>
             
             {selectedInk?.type === 'ink' ? (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-4">
                 <div className="space-y-2">
-                  <Label>Container Weight</Label>
-                  <Select value={usageFormData.weight} onValueChange={v => setUsageFormData({...usageFormData, weight: v})}>
-                    <SelectTrigger>
+                  <Label className="text-xs uppercase tracking-wider text-gray-500 font-bold block">Container</Label>
+                  <Select 
+                    value={usageFormData.weight} 
+                    onValueChange={v => {
+                      setUsageFormData({
+                        ...usageFormData, 
+                        weight: v,
+                        count: '1',
+                        quantity: v
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="rounded-xl border-gray-200">
                       <SelectValue placeholder="Select weight" />
                     </SelectTrigger>
                     <SelectContent>
@@ -2556,14 +2841,18 @@ export function StockManagement() {
                     </SelectContent>
                   </Select>
                 </div>
+
                 <div className="space-y-2">
-                  <Label>Number of Containers</Label>
+                  <Label className="text-xs uppercase tracking-wider text-gray-500 font-bold block">Total Weight (kg)</Label>
                   <Input 
                     type="number" 
-                    value={usageFormData.count} 
-                    onChange={e => setUsageFormData({...usageFormData, count: e.target.value})} 
+                    step="0.01"
+                    value={usageFormData.quantity} 
+                    onChange={e => setUsageFormData({...usageFormData, quantity: e.target.value})} 
+                    placeholder="Enter weight in kg (e.g. 1.5, 0.75)"
                     required 
-                    min="1"
+                    min="0.01"
+                    className="rounded-xl border-gray-200"
                   />
                 </div>
               </div>
@@ -2584,39 +2873,20 @@ export function StockManagement() {
             {/* Usage summary badge */}
             {(() => {
               if (!selectedInk) return null;
-              if (selectedInk.type === 'ink') {
-                const uWeight = Number(usageFormData.weight || 0);
-                const uCount = Number(usageFormData.count || 0);
-                
-                if (uWeight > 0 && uCount > 0) {
-                  const totalDeductKg = uWeight * uCount;
-                  const approxValue = totalDeductKg * (selectedInk.defaultRate || 0);
-                  return (
-                    <div className="p-3 bg-purple-50/85 border border-purple-200/55 rounded-2xl text-[11px] space-y-1 text-purple-900 font-medium font-mono">
-                      <p className="font-serif font-bold text-purple-950">Ink usage summary:</p>
-                      <p>Total Deducting: <span className="font-bold underline text-xs text-red-600">{totalDeductKg.toFixed(2)} kg</span> ({uCount} containers × {uWeight} kg)</p>
-                      {selectedInk.defaultRate ? (
-                        <p>Estimated Material Value: <span className="font-bold">₹{approxValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> (at ₹{selectedInk.defaultRate.toFixed(2)}/kg)</p>
-                      ) : null}
-                    </div>
-                  );
-                }
-              } else {
-                const uQty = Number(usageFormData.quantity || 0);
-                if (uQty > 0) {
-                  const unitLabel = selectedInk.type === 'plate' ? 'units' : 'sheets';
-                  const rateSuffix = selectedInk.type === 'plate' ? '/unit' : '/sheet';
-                  const approxValue = uQty * (selectedInk.defaultRate || 0);
-                  return (
-                    <div className="p-3 bg-purple-50/85 border border-purple-200/55 rounded-2xl text-[11px] space-y-1 text-purple-900 font-medium font-mono">
-                      <p className="font-serif font-bold text-purple-950">{selectedInk.type.charAt(0).toUpperCase() + selectedInk.type.slice(1)} usage summary:</p>
-                      <p>Total Deducting: <span className="font-bold underline text-xs text-red-600">{uQty.toLocaleString()} {unitLabel}</span></p>
-                      {selectedInk.defaultRate ? (
-                        <p>Estimated Material Value: <span className="font-bold">₹{approxValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> (at ₹{selectedInk.defaultRate.toFixed(2)}{rateSuffix})</p>
-                      ) : null}
-                    </div>
-                  );
-                }
+              const uQty = Number(usageFormData.quantity || 0);
+              if (uQty > 0) {
+                const unitLabel = selectedInk.type === 'ink' ? 'kg' : selectedInk.type === 'plate' ? 'units' : 'sheets';
+                const rateSuffix = selectedInk.type === 'ink' ? '/kg' : selectedInk.type === 'plate' ? '/unit' : '/sheet';
+                const approxValue = uQty * (selectedInk.defaultRate || 0);
+                return (
+                  <div className="p-3 bg-purple-50/85 border border-purple-200/55 rounded-2xl text-[11px] space-y-1 text-purple-900 font-medium font-mono">
+                    <p className="font-serif font-bold text-purple-950">{selectedInk.type.charAt(0).toUpperCase() + selectedInk.type.slice(1)} usage summary:</p>
+                    <p>Total Deducting: <span className="font-bold underline text-xs text-red-600">{selectedInk.type === 'ink' ? uQty.toFixed(2) : uQty.toLocaleString()} {unitLabel}</span></p>
+                    {selectedInk.defaultRate ? (
+                      <p>Estimated Material Value: <span className="font-bold">₹{approxValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> (at ₹{selectedInk.defaultRate.toFixed(2)}{rateSuffix})</p>
+                    ) : null}
+                  </div>
+                );
               }
               return null;
             })()}
@@ -2953,7 +3223,7 @@ export function StockManagement() {
 
       {editingStock && (
         <Dialog open={!!editingStock} onOpenChange={() => setEditingStock(null)}>
-          <DialogContent className="sm:max-w-[425px] rounded-[32px]">
+          <DialogContent className="sm:max-w-[425px] rounded-[32px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="font-serif text-2xl">Edit {formData.type.charAt(0).toUpperCase() + formData.type.slice(1)} Stock</DialogTitle>
             </DialogHeader>
@@ -3064,16 +3334,42 @@ export function StockManagement() {
                 )}
 
                 {(formData.type === 'paper' || formData.type === 'board') && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="edit-gsm" className="text-xs uppercase tracking-widest text-gray-400 font-bold">GSM</Label>
-                      <Input id="edit-gsm" type="number" className="rounded-xl border-gray-200 h-12" value={formData.gsm} onChange={e => setFormData({...formData, gsm: e.target.value})} required />
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-gsm" className="text-xs uppercase tracking-widest text-gray-400 font-bold">GSM (Optional)</Label>
+                        <Input id="edit-gsm" type="number" className="rounded-xl border-gray-200 h-12" value={formData.gsm} onChange={e => setFormData({...formData, gsm: e.target.value})} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-size" className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">Size</Label>
+                        <Input id="edit-size" className="rounded-xl border-gray-200 h-12" value={formData.size} onChange={e => setFormData({...formData, size: e.target.value})} required />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-unit" className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">Unit</Label>
+                        <Input id="edit-unit" className="rounded-xl border-gray-200 h-12" value={formData.unit || 'Sheets'} onChange={e => setFormData({...formData, unit: e.target.value})} required />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-brand" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Brand (Optional)</Label>
+                        <Input id="edit-brand" className="rounded-xl border-gray-200 h-12" value={formData.brand || ''} onChange={e => setFormData({...formData, brand: e.target.value})} />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-millName" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Mill Name (Optional)</Label>
+                        <Input id="edit-millName" className="rounded-xl border-gray-200 h-12" value={formData.millName || ''} onChange={e => setFormData({...formData, millName: e.target.value})} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-shade" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Shade (Optional)</Label>
+                        <Input id="edit-shade" className="rounded-xl border-gray-200 h-12" value={formData.shade || ''} onChange={e => setFormData({...formData, shade: e.target.value})} />
+                      </div>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="edit-size" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Size</Label>
-                      <Input id="edit-size" className="rounded-xl border-gray-200 h-12" value={formData.size} onChange={e => setFormData({...formData, size: e.target.value})} required />
+                      <Label htmlFor="edit-notes" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Notes (Optional)</Label>
+                      <Input id="edit-notes" className="rounded-xl border-gray-200 h-12" value={formData.notes || ''} onChange={e => setFormData({...formData, notes: e.target.value})} />
                     </div>
-                  </div>
+                  </>
                 )}
 
                 {formData.type === 'plate' && (
@@ -3154,7 +3450,7 @@ export function StockManagement() {
 
       {isPurchaseOpen && selectedStockForPurchase && (
         <Dialog open={isPurchaseOpen} onOpenChange={() => { setIsPurchaseOpen(false); setSelectedStockForPurchase(null); }}>
-          <DialogContent className="sm:max-w-[450px] rounded-[32px]">
+          <DialogContent className="sm:max-w-[450px] rounded-[32px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="font-serif text-2xl flex items-center gap-2">
                 <ShoppingBag className="text-emerald-600 h-6 w-6" />

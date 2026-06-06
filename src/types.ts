@@ -11,15 +11,22 @@ export interface StockItem {
   lastUpdated: number;
   defaultRate?: number; // Optional default unit rate/charge for ledger billing
   paperType?: string; // e.g., 'Art Paper', 'Maplitho', etc.
+  unit?: string;
+  brand?: string;
+  millName?: string;
+  shade?: string;
+  notes?: string;
 }
 
 export interface JobItem {
   stockId: string;
-  quantityUsed: number;
-  ups?: number;
-  allocatedPaper?: number;
+  quantityUsed: number; // Actual Sheets Used
+  ups?: number; // Matter Ups
+  allocatedPaper?: number; // Auto calculated
   isJoint?: boolean;
   paperRef?: string;
+  paperRate?: number; // Optional paper rate/estimate per sheet
+  wastageSheets?: number; // Wastage Sheets
 }
 
 export interface Job {
@@ -54,10 +61,51 @@ export interface Job {
   dispatches?: DispatchRecord[]; // Direct partial dispatch tracking logs
   dispatchStatus?: 'pending' | 'partial' | 'completed'; // Computed or manually adjusted status
   isJoint?: boolean; // If true, the whole job is joint
-  jointRef?: string; // Reference of the joint job to link other jobs
+  jointJobType?: 'master' | 'linked'; // Joint Job Type
+  sharedRunId?: string; // Generated shared run ID (e.g., JR001) Shared across Joint Jobs
+  jointRef?: string; // Reference of the joint job to link other jobs (or shortId)
   isRepeat?: boolean; // If true, the whole job is a repeat job
   repeatRef?: string; // Reference of the parent job for repeat
   previewImage?: string; // Base64 representation of job artwork/proof image for preview
+  jointParentId?: string;
+  paperBillingMethod?: '100sheets' | 'gross' | 'ream' | 'custom' | '';
+  paperBillingRate?: number;
+  paperBillingAmount?: number;
+}
+
+export interface JointRun {
+  id: string;
+  sharedRunId: string;
+  paper: {
+    stockId: string;
+    paperSize?: string;
+    paperSection?: string;
+    paperNotes?: string;
+    productionNotes?: string;
+    paperRate?: number;
+  };
+  totalSheetsUsed: number;
+  wastageSheets: number;
+  sharedPlates: {
+    plateId: string;
+    count: number;
+    rate?: number;
+    isJoint?: boolean;
+    isJointRef?: boolean;
+    plateRef?: string;
+  }[];
+  linkedJobs: string[];
+}
+
+export interface JointRunAuditLog {
+  id: string;
+  sharedRunId: string;
+  userEmail: string;
+  changedField: string;
+  oldValue: any;
+  newValue: any;
+  affectedJobs: string[];
+  timestamp: number;
 }
 
 export interface DispatchRecord {
@@ -104,4 +152,5 @@ export interface StockHistory {
   purchaseRate?: number;
   supplier?: string;
   invoiceNo?: string;
+  jobId?: string;
 }

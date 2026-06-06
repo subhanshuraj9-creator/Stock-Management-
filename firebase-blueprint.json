@@ -12,7 +12,12 @@
         "type": { "type": "string", "enum": ["paper", "board", "ink", "plate"], "description": "Category of the stock" },
         "paperType": { "type": "string", "description": "Sub-category / Specific brand or section of paper" },
         "lastUpdated": { "type": "number", "description": "Timestamp of last update" },
-        "defaultRate": { "type": "number", "description": "Suggested charge per unit/sheet for billing" }
+        "defaultRate": { "type": "number", "description": "Suggested charge per unit/sheet for billing" },
+        "unit": { "type": "string", "description": "Inventory unit (e.g., Sheets, Pkts)" },
+        "brand": { "type": "string", "description": "Brand of the stock item" },
+        "millName": { "type": "string", "description": "Mill where the stock item was manufactured" },
+        "shade": { "type": "string", "description": "Shade of paper/board (e.g., Blush Pink, Natural)" },
+        "notes": { "type": "string", "description": "Additional notes about this stock item" }
       },
       "required": ["name", "quantity", "type", "lastUpdated"]
     },
@@ -117,6 +122,19 @@
         "previewImage": {
           "type": "string",
           "description": "Base64 representation of job artwork/proof image for preview"
+        },
+        "paperBillingMethod": {
+          "type": "string",
+          "enum": ["100sheets", "gross", "ream", "custom", ""],
+          "description": "Type of paper billing applied to customers"
+        },
+        "paperBillingRate": {
+          "type": "number",
+          "description": "Paper billing rate value"
+        },
+        "paperBillingAmount": {
+          "type": "number",
+          "description": "Automatically computed or manually entered customer paper billing amount"
         }
       },
       "required": ["clientName", "jobDescription", "date", "items"]
@@ -152,6 +170,66 @@
         "createdAt": { "type": "number", "description": "Timestamp of creation" }
       },
       "required": ["name", "createdAt"]
+    },
+    "JointRun": {
+      "title": "Joint Production Run",
+      "description": "Represents a combined manufacture or production run sharing papers and plates.",
+      "type": "object",
+      "properties": {
+        "sharedRunId": { "type": "string" },
+        "paper": {
+          "type": "object",
+          "properties": {
+            "stockId": { "type": "string" },
+            "paperSize": { "type": "string" },
+            "paperSection": { "type": "string" },
+            "paperNotes": { "type": "string" },
+            "productionNotes": { "type": "string" },
+            "paperRate": { "type": "number" }
+          },
+          "required": ["stockId"]
+        },
+        "totalSheetsUsed": { "type": "number" },
+        "wastageSheets": { "type": "number" },
+        "sharedPlates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "plateId": { "type": "string" },
+              "count": { "type": "number" },
+              "rate": { "type": "number" },
+              "isJoint": { "type": "boolean" },
+              "isJointRef": { "type": "boolean" },
+              "plateRef": { "type": "string" }
+            },
+            "required": ["plateId", "count"]
+          }
+        },
+        "linkedJobs": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["sharedRunId", "paper", "totalSheetsUsed", "wastageSheets", "sharedPlates", "linkedJobs"]
+    },
+    "JointRunAuditLog": {
+      "title": "Joint Run Audit Log",
+      "description": "Tracks changes to shared run data for compliance and synchronization safeguards.",
+      "type": "object",
+      "properties": {
+        "sharedRunId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "changedField": { "type": "string" },
+        "oldValue": { "type": "string" },
+        "newValue": { "type": "string" },
+        "affectedJobs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["sharedRunId", "userEmail", "changedField", "oldValue", "newValue", "affectedJobs", "timestamp"]
     }
   },
   "firestore": {
@@ -174,6 +252,14 @@
     "/boardSections/{sectionId}": {
       "schema": "BoardSection",
       "description": "Collection of custom board sub-categories / sections"
+    },
+    "/jointRuns/{sharedRunId}": {
+      "schema": "JointRun",
+      "description": "Collection of shared joint runs"
+    },
+    "/jointRunAuditLogs/{logId}": {
+      "schema": "JointRunAuditLog",
+      "description": "Collection of joint run sync modifications audit history"
     }
   }
 }

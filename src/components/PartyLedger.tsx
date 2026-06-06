@@ -150,12 +150,12 @@ export function PartyLedger() {
     csvContent += "Date,Type,Particulars,Debit (+),Credit (-),Running Balance\n";
 
     if (startDate) {
-      csvContent += `"${format(new Date(startDate + 'T00:00:00'), 'dd MMM yyyy')}","OPENING","Balance Brought Forward (Opening)","-","-","INR ${openingBalance.toFixed(2)}"\n`;
+      csvContent += `"${format(new Date(startDate + 'T00:00:00'), 'dd-MM-yy')}","OPENING","Balance Brought Forward (Opening)","-","-","INR ${openingBalance.toFixed(2)}"\n`;
     }
 
     const chronological = [...transactions].reverse();
     chronological.forEach(t => {
-      const dateStr = format(new Date(t.date), 'dd MMM yyyy');
+      const dateStr = format(new Date(t.date), 'dd-MM-yy');
       const typeStr = t.type === 'debit' ? 'JOB BILL' : 'RECEIPT';
       const titleEscaped = t.title.replace(/"/g, '""');
       const detailsJoin = (t.details || []).join(' | ').replace(/"/g, '""');
@@ -195,16 +195,16 @@ export function PartyLedger() {
     const activeTheme = LAYOUT_THEMES[layoutTheme] || LAYOUT_THEMES.classic;
 
     const dateRangeStr = startDate || endDate 
-      ? `Period: ${startDate ? format(new Date(startDate + 'T00:00:00'), 'dd MMM yyyy') : 'Beginning'} to ${endDate ? format(new Date(endDate + 'T23:59:59'), 'dd MMM yyyy') : 'Present'}`
+      ? `Period: ${startDate ? format(new Date(startDate + 'T00:00:00'), 'dd-MM-yy') : 'Beginning'} to ${endDate ? format(new Date(endDate + 'T23:59:59'), 'dd-MM-yy') : 'Present'}`
       : 'Full Ledger Accounts';
 
     const itemsRows = [...transactions].reverse().map(tr => `
       <tr style="border-bottom: 1px solid var(--border-color);">
-        <td style="padding: 12px 14px; font-family: monospace; font-size: 11px; color: #4a5568;">
-          ${format(new Date(tr.date), 'dd MMM yyyy')}
+        <td style="padding: 7px 12px; font-family: monospace; font-size: 11px; color: #4a5568;">
+          ${format(new Date(tr.date), 'dd-MM-yy')}
         </td>
-        <td style="padding: 12px 14px; font-size: 11px; font-weight: 600;">
-          <span style="display: inline-block; padding: 2px 7px; border-radius: 4px; ${
+        <td style="padding: 7px 12px; font-size: 11px; font-weight: 600;">
+          <span style="display: inline-block; padding: 1.5px 6px; border-radius: 4px; font-size: 10px; ${
             tr.type === 'debit' 
               ? 'background-color: #fee2e2; color: #991b1b; border: 1px solid rgba(153,27,27,0.1);' 
               : 'background-color: #d1fae5; color: #065f46; border: 1px solid rgba(6,95,70,0.1);'
@@ -212,22 +212,16 @@ export function PartyLedger() {
             ${tr.type === 'debit' ? 'JOB BILL' : 'RECEIPT'}
           </span>
         </td>
-        <td style="padding: 12px 14px; font-size: 12px; color: #1a202c;">
+        <td style="padding: 7px 12px; font-size: 11.5px; color: #1a202c;">
           <div style="font-weight: 600; color: #2d3748;">${tr.title}</div>
-          ${tr.details && tr.details.length > 0 
-            ? `<div style="font-size: 10px; color: #718096; margin-top: 5px; line-height: 1.4;">
-                ${tr.details.map((d: string) => `• ${d}`).join('<br/>')}
-               </div>` 
-            : ''
-          }
         </td>
-        <td style="padding: 12px 14px; text-align: right; font-family: monospace; font-size: 12px; color: #e53e3e; font-weight: 500;">
+        <td style="padding: 7px 12px; text-align: right; font-family: monospace; font-size: 11.5px; color: #e53e3e; font-weight: 500;">
           ${tr.type === 'debit' ? `₹${tr.amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
         </td>
-        <td style="padding: 12px 14px; text-align: right; font-family: monospace; font-size: 12px; color: #38a169; font-weight: 500;">
+        <td style="padding: 7px 12px; text-align: right; font-family: monospace; font-size: 11.5px; color: #38a169; font-weight: 500;">
           ${tr.type === 'credit' ? `₹${tr.amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
         </td>
-        <td style="padding: 12px 14px; text-align: right; font-family: monospace; font-size: 12px; font-weight: 600; color: ${tr.balance > 0 ? '#dd6b20' : tr.balance < 0 ? '#3182ce' : '#2d3748'};">
+        <td style="padding: 7px 12px; text-align: right; font-family: monospace; font-size: 11.5px; font-weight: 600; color: ${tr.balance > 0 ? '#dd6b20' : tr.balance < 0 ? '#3182ce' : '#2d3748'};">
           ₹${tr.balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </td>
       </tr>
@@ -235,18 +229,18 @@ export function PartyLedger() {
 
     const openingBalanceRow = startDate ? `
       <tr style="border-bottom: 1px solid var(--border-color); background-color: var(--light-bg);">
-        <td style="padding: 12px 14px; font-family: monospace; font-size: 11px; color: #718096;">
-          ${format(new Date(startDate + 'T00:00:00'), 'dd MMM yyyy')}
+        <td style="padding: 7px 12px; font-family: monospace; font-size: 11px; color: #718096;">
+          ${format(new Date(startDate + 'T00:00:00'), 'dd-MM-yy')}
         </td>
-        <td style="padding: 12px 14px; font-size: 11px; font-weight: bold; color: #4a5568;">
+        <td style="padding: 7px 12px; font-size: 11px; font-weight: bold; color: #4a5568;">
           OPENING
         </td>
-        <td style="padding: 12px 14px; font-size: 12px; font-weight: bold; color: #4a5568; font-style: italic;">
+        <td style="padding: 7px 12px; font-size: 11.5px; font-weight: bold; color: #4a5568; font-style: italic;">
           Balance Brought Forward (Opening)
         </td>
-        <td style="padding: 12px 14px; text-align: right;">-</td>
-        <td style="padding: 12px 14px; text-align: right;">-</td>
-        <td style="padding: 12px 14px; text-align: right; font-family: monospace; font-size: 12px; font-weight: bold; color: ${openingBalance > 0 ? '#dd6b20' : openingBalance < 0 ? '#3182ce' : '#4a5568'};">
+        <td style="padding: 7px 12px; text-align: right;">-</td>
+        <td style="padding: 7px 12px; text-align: right;">-</td>
+        <td style="padding: 7px 12px; text-align: right; font-family: monospace; font-size: 11.5px; font-weight: bold; color: ${openingBalance > 0 ? '#dd6b20' : openingBalance < 0 ? '#3182ce' : '#4a5568'};">
           ₹${openingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </td>
       </tr>
@@ -271,103 +265,113 @@ export function PartyLedger() {
               font-family: var(--font-body);
               color: #2d3748;
               background: #ffffff;
-              padding: 40px;
+              padding: 30px;
               margin: 0;
             }
             .header {
-              border-bottom: ${headerMode === 'letterhead' ? 'none' : '2px solid var(--primary)'};
-              padding-bottom: 20px;
-              margin-bottom: 25px;
+              border-bottom: ${headerMode === 'letterhead' ? 'none' : '2.5px solid var(--primary)'};
+              padding-bottom: 12px;
+              margin-bottom: 18px;
             }
             .company-name {
               font-family: var(--font-display);
-              font-size: 24px;
+              font-size: 20px;
               font-weight: 700;
               color: var(--primary);
               text-transform: uppercase;
-              letter-spacing: 1px;
+              letter-spacing: 0.5px;
             }
             .title {
               font-family: var(--font-display);
-              font-size: 26px;
-              font-weight: 600;
-              margin-top: 5px;
-              color: #1a202c;
+              font-size: 22px;
+              font-weight: 700;
+              color: var(--primary);
+              text-transform: uppercase;
+              letter-spacing: 0.5px;
             }
             .meta-grid {
-              display: grid;
-              grid-template-columns: 1fr 1fr;
+              display: flex;
+              justify-content: space-between;
               gap: 20px;
-              margin-bottom: 30px;
-              font-size: 13px;
+              margin-bottom: 20px;
+              font-size: 12px;
+              border-bottom: 1px solid var(--border-color);
+              padding-bottom: 12px;
             }
             .meta-block p {
-              margin: 4px 0;
+              margin: 3px 0;
             }
             .summary-cards {
               display: grid;
               grid-template-columns: 1fr 1fr 1fr;
-              gap: 15px;
-              margin-bottom: 30px;
+              gap: 12px;
+              margin-bottom: 20px;
             }
             .card {
               border: 1px solid var(--border-color);
-              border-radius: ${layoutTheme === 'modern' ? '16px' : '0px'};
-              padding: 16px;
+              border-radius: ${layoutTheme === 'modern' ? '12px' : '0px'};
+              padding: 10px 14px;
             }
             .card-title {
-              font-size: 11px;
-              color: #718096;
+              font-size: 10px;
+              color: #4a5568;
               text-transform: uppercase;
-              font-weight: bold;
-              margin: 0 0 6px 0;
+              font-weight: 700;
+              margin: 0 0 4px 0;
               letter-spacing: 0.5px;
             }
             .card-amount {
-              font-size: 20px;
+              font-size: 16px;
               font-weight: 700;
               margin: 0;
             }
             table {
               width: 100%;
               border-collapse: collapse;
-              margin-bottom: 30px;
+              margin-bottom: 20px;
             }
             th {
-              background-color: var(--light-bg);
-              color: var(--primary);
-              font-size: 11px;
+              background-color: var(--primary);
+              color: #ffffff;
+              font-size: 10.5px;
               text-transform: uppercase;
-              letter-spacing: 0.5px;
+              letter-spacing: 0.8px;
               text-align: left;
-              padding: 12px 14px;
+              padding: 8px 12px;
               border-bottom: 2px solid var(--border-color);
             }
             .footer {
               text-align: center;
-              font-size: 11px;
-              color: #a0aec0;
-              margin-top: 50px;
+              font-size: 10px;
+              color: #718096;
+              margin-top: 30px;
               border-top: 1px solid var(--border-color);
-              padding-top: 20px;
+              padding-top: 15px;
+              line-height: 1.4;
             }
             .sign-section {
               display: flex;
               justify-content: ${showTerms ? 'space-between' : 'flex-end'};
               align-items: flex-end;
-              margin-top: 40px;
+              margin-top: 30px;
             }
             .stamp-signature {
-              border-top: 1px solid var(--primary);
-              width: 220px;
+              border-top: 1.5px solid var(--primary);
+              width: 200px;
               text-align: center;
-              padding-top: 10px;
-              font-size: 13px;
+              padding-top: 8px;
+              font-size: 12px;
               font-weight: 500;
               color: #4a5568;
             }
+            @page {
+              size: auto;
+              margin: 0mm;
+            }
             @media print {
-              body { padding: 0; }
+              body {
+                padding: 12mm 15mm !important;
+              }
               .no-print { display: none; }
             }
           </style>
@@ -380,52 +384,55 @@ export function PartyLedger() {
           </div>
 
           ${headerMode === 'letterhead' ? `
-            <div style="height: 165px; display: flex; align-items: flex-end; justify-content: flex-end; margin-bottom: 30px; border-bottom: 1px dashed var(--border-color);">
+            <div style="height: 140px; display: flex; align-items: flex-end; justify-content: flex-end; margin-bottom: 20px; border-bottom: 1px dashed var(--border-color);">
               <span style="font-size: 10px; color:#a0aec0; margin-bottom: 4px; font-family: monospace;">PRE-PRINTED LETTERHEAD SPACE</span>
             </div>
           ` : ''}
 
-          <div class="header">
-            <div style="display: flex; justify-content: space-between; align-items: flex-end;">
-              ${headerMode === 'full_header' ? `
-                <div>
-                  <div class="company-name">${pressDetails.name}</div>
-                  <div style="font-size: 11px; color: #718096; margin-top: 4px; line-height: 1.4; text-align: left;">
-                    ${pressDetails.address}<br/>
-                    Ph: ${pressDetails.phone} | Email: ${pressDetails.email}
-                    ${pressDetails.gstNumber ? `<br/><strong>GSTIN:</strong> ${pressDetails.gstNumber}` : ''}
-                  </div>
-                  <div class="title" style="margin-top: 15px;">Ledger Account Statement</div>
+          <div class="header" style="display: flex; justify-content: space-between; align-items: flex-end;">
+            ${headerMode === 'full_header' ? `
+              <div style="text-align: left;">
+                <div class="company-name" style="font-size: 18.5px; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: 0.5px; font-family: var(--font-display);">${pressDetails.name}</div>
+                <div style="font-size: 11px; color: #4a5568; margin-top: 4px; line-height: 1.4; font-family: var(--font-body);">
+                  ${pressDetails.address}<br/>
+                  Phone: ${pressDetails.phone} | Email: ${pressDetails.email}
+                  ${pressDetails.gstNumber ? `<br/><strong>GSTIN:</strong> ${pressDetails.gstNumber}` : ''}
                 </div>
-              ` : `<div><div class="title">Ledger Account Statement</div></div>`}
-              <div style="text-align: right; font-size: 12px; color: #718096; ${headerMode === 'letterhead' ? 'margin-top: -10px;' : ''}">
-                Generated: ${format(new Date(), 'dd MMM yyyy HH:mm')}
+              </div>
+            ` : `<div>&nbsp;</div>`}
+            
+            <div style="text-align: right; min-width: 250px; ${headerMode === 'letterhead' ? 'margin-top: -10px;' : ''}">
+              <div style="font-family: var(--font-display); font-size: 20px; font-weight: 700; color: var(--primary); letter-spacing: 0.5px; text-transform: uppercase;">LEDGER STATEMENT</div>
+              <div style="font-size: 11px; color: #718096; margin-top: 2px;">
+                Account Register Trace
               </div>
             </div>
           </div>
 
-          <div class="meta-grid">
-            <div class="meta-block">
-              <p style="font-weight: bold; font-size: 14px; color: #4a5568; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Party/Client Details:</p>
-              <p style="font-size: 18px; font-weight: bold; color: #1a202c; margin: 0;">${selectedParty}</p>
-              <p style="color: #718096; margin-top: 4px; font-size: 12px;">Active printing ledger accounts book</p>
+          <div class="meta-grid" style="display: flex; justify-content: space-between; margin-bottom: 20px; font-size: 12px; gap: 20px; border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+            <div style="text-align: left;">
+              <span style="font-size: 9px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px; color: #718096; display: block; margin-bottom: 3px;">Statement Prepared For:</span>
+              <span style="font-size: 15px; font-weight: 700; color: #1a202c; font-family: var(--font-display);">${selectedParty}</span>
+              <span style="display: block; font-size: 10px; color: #718096; margin-top: 2px;">Active Client Ledger Accounts</span>
             </div>
-            <div class="meta-block" style="text-align: right; display: flex; flex-direction: column; justify-content: flex-end;">
-              <p style="font-weight: 600; color: #4a5568; margin: 0;">Statement Period Range:</p>
-              <p style="font-size: 14px; font-weight: bold; color: #2d3748; margin: 4px 0 0 0;">${dateRangeStr}</p>
+            
+            <div style="text-align: right;">
+              <span style="font-size: 9px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px; color: #718096; display: block; margin-bottom: 3px;">Statement Period Range:</span>
+              <span style="font-size: 12px; font-weight: 600; color: #2d3748; font-family: monospace;">${dateRangeStr}</span>
+              <span style="display: block; font-size: 10px; color: #718096; margin-top: 2px;">Generated on: ${format(new Date(), 'dd-MM-yy')}</span>
             </div>
           </div>
 
           <div class="summary-cards">
-            <div class="card" style="border-left: 4px solid #f56565; background-color: #fff5f5;">
+            <div class="card" style="border-left: 3.5px solid #f56565; background-color: #fff5f5;">
               <h4 class="card-title" style="color: #c53030;">Debits added in period</h4>
               <p class="card-amount" style="color: #c53030;">₹${totalBilled.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
             </div>
-            <div class="card" style="border-left: 4px solid #48bb78; background-color: #f0fff4;">
+            <div class="card" style="border-left: 3.5px solid #48bb78; background-color: #f0fff4;">
               <h4 class="card-title" style="color: #22543d;">Credits paid in period</h4>
               <p class="card-amount" style="color: #22543d;">₹${totalPaid.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
             </div>
-            <div class="card" style="border-left: 4px solid var(--primary); background-color: var(--light-bg);">
+            <div class="card" style="border-left: 3.5px solid var(--primary); background-color: var(--light-bg);">
               <h4 class="card-title" style="color: var(--primary);">Closing Period Outstanding</h4>
               <p class="card-amount" style="color: var(--primary);">₹${balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
             </div>
@@ -434,12 +441,12 @@ export function PartyLedger() {
           <table>
             <thead>
               <tr>
-                <th style="width: 130px;">Date</th>
-                <th style="width: 110px;">Voucher</th>
-                <th>Particulars / Description Of Transaction</th>
-                <th style="width: 120px; text-align: right;">Debit (₹)</th>
-                <th style="width: 120px; text-align: right;">Credit (₹)</th>
-                <th style="width: 130px; text-align: right;">Balance (₹)</th>
+                <th style="width: 110px;">Date</th>
+                <th style="width: 90px;">Voucher</th>
+                <th>Particulars</th>
+                <th style="width: 110px; text-align: right;">Debit (₹)</th>
+                <th style="width: 110px; text-align: right;">Credit (₹)</th>
+                <th style="width: 120px; text-align: right;">Balance (₹)</th>
               </tr>
             </thead>
             <tbody>
@@ -449,29 +456,29 @@ export function PartyLedger() {
           </table>
 
           <div style="display: flex; justify-content: flex-end; margin-top: 15px;">
-            <div style="width: 340px; border-top: 2px solid #2d3748; padding-top: 14px; font-size: 13px;">
-              <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
-                <span style="font-weight: 500; color: #4a5568;">Opening Balance Brought Forward:</span>
-                <span style="font-family: monospace;">₹${openingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              </div>
-              <div style="display: flex; justify-content: space-between; margin-bottom: 6px; color: #c53030;">
-                <span style="font-weight: 500;">(+) Total New Job Bills:</span>
-                <span style="font-family: monospace;">₹${totalBilled.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              </div>
-              <div style="display: flex; justify-content: space-between; margin-bottom: 6px; color: #22543d;">
-                <span style="font-weight: 500;">(-) Total Received Credits:</span>
-                <span style="font-family: monospace;">₹${totalPaid.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              </div>
-              <div style="display: flex; justify-content: space-between; border-top: 1px solid var(--border-color); padding-top: 10px; font-size: 15px; font-weight: bold; color: #1a202c;">
-                <span>CLOSING BALANCE DUE:</span>
-                <span style="font-family: monospace; color: var(--primary);">₹${balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              </div>
-            </div>
+            <table style="width: 320px; border-collapse: collapse; margin-bottom: 20px; border: 1px solid var(--border-color); font-size: 11.5px; border-radius: 8px;">
+              <tr style="border-bottom: 1px solid var(--border-color); background-color: #fafaf9;">
+                <td style="padding: 7px 10px; color: #4a5568; font-weight: 600;">Opening balance:</td>
+                <td style="padding: 7px 10px; text-align: right; font-family: monospace; font-weight: 600; color: #2d3748;">₹${openingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid var(--border-color); color: #991b1b;">
+                <td style="padding: 7px 10px; font-weight: 600;">(+) Total Job Bills:</td>
+                <td style="padding: 7px 10px; text-align: right; font-family: monospace; font-weight: 600;">₹${totalBilled.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid var(--border-color); color: #065f46;">
+                <td style="padding: 7px 10px; font-weight: 600;">(-) Total Received:</td>
+                <td style="padding: 7px 10px; text-align: right; font-family: monospace; font-weight: 600;">₹${totalPaid.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              </tr>
+              <tr style="background-color: var(--primary); color: white; font-weight: bold; font-size: 13px;">
+                <td style="padding: 8px 10px;">Closing Balance Due:</td>
+                <td style="padding: 8px 10px; text-align: right; font-family: monospace;">₹${balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              </tr>
+            </table>
           </div>
 
           <div class="sign-section">
             ${showTerms ? `
-              <div style="max-width: 60%; font-size: 11px; color:#718096; line-height: 1.5; text-align: left;">
+              <div style="max-width: 60%; font-size: 10.5px; color:#718096; line-height: 1.45; text-align: left;">
                 <strong>Statement Explanatory Notes:</strong><br/>
                 1. This represents an active chronological trace of reconciled debits/credits outstanding.<br/>
                 2. Balance matches of transactions copy are computer generated ledger values on demand.
@@ -627,15 +634,10 @@ export function PartyLedger() {
       let paperTotal = 0;
       const paperDetails: string[] = [];
       job.items.forEach(item => {
-        const hasAutoCalculated = (item.ups !== undefined && item.ups > 0 && job.orderedQuantity && job.orderedQuantity > 0);
-        const billingSheets = hasAutoCalculated 
-          ? Math.ceil(job.orderedQuantity / (item.ups || 1)) 
-          : (item.calculatedSheets !== undefined ? item.calculatedSheets : (item.isJoint ? 0 : item.quantityUsed));
-        const itemCost = ((billingSheets || 0) / 500) * (item.rate || 0);
-        paperTotal += itemCost;
-        if (itemCost > 0) {
+        const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
+        if (sheetsUsed > 0) {
           const stock = stocks.find(s => s.id === item.stockId);
-          paperDetails.push(`${stock?.name || 'Stock'}: ${billingSheets} sheets @ ₹${(item.rate || 0).toFixed(2)}/500 shs`);
+          paperDetails.push(`${stock?.name || 'Stock'} (${sheetsUsed} shs)`);
         }
       });
 
@@ -666,8 +668,8 @@ export function PartyLedger() {
         if (plateCost > 0) {
           const stock = stocks.find(s => s.id === plate.plateId);
           const isAdditional = (job.isJoint || (job.jointRef && job.jointRef.trim() !== '')) && !plate.isJoint && !plate.isJointRef;
-          const label = isAdditional ? `${stock?.name || 'Plate'} (Additional Plate)` : (stock?.name || 'Plate');
-          plateDetails.push(`${label}: ${plate.count} @ ₹${(plate.rate || 0).toFixed(2)}`);
+          const label = isAdditional ? `${stock?.name || 'Plate'} (Addl.)` : (stock?.name || 'Plate');
+          plateDetails.push(`${label} (${plate.count}): ₹${plateCost.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`);
         }
       });
 
@@ -676,7 +678,7 @@ export function PartyLedger() {
       (job.processCharges || []).forEach(pc => {
         if (pc.amount > 0) {
           processTotal += pc.amount;
-          processDetails.push(`${pc.name}: ₹${pc.amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${pc.notes ? ` (${pc.notes})` : ''}`);
+          processDetails.push(`${pc.name}: ₹${pc.amount.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`);
         }
       });
 
@@ -686,14 +688,14 @@ export function PartyLedger() {
         const halfTotal = (job.lamination.halfQty || 0) * (job.lamination.halfRate || 0);
         if (halfTotal > 0) {
           laminationTotal += halfTotal;
-          laminationDetails.push(`Half Lamination: ${job.lamination.halfQty?.toLocaleString()} sheets @ ₹${(job.lamination.halfRate || 0).toFixed(2)}/sh`);
+          laminationDetails.push(`Half Lamination: ₹${halfTotal.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`);
         }
       }
       if (job.lamination?.fullEnabled) {
         const fullTotal = (job.lamination.fullQty || 0) * (job.lamination.fullRate || 0);
         if (fullTotal > 0) {
           laminationTotal += fullTotal;
-          laminationDetails.push(`Full Lamination: ${job.lamination.fullQty?.toLocaleString()} sheets @ ₹${(job.lamination.fullRate || 0).toFixed(2)}/sh`);
+          laminationDetails.push(`Full Lamination: ₹${fullTotal.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`);
         }
       }
 
@@ -814,7 +816,7 @@ export function PartyLedger() {
             <DialogTrigger render={<Button className="bg-[#5A5A40] hover:bg-[#4A4A30] rounded-full px-6 w-full sm:w-auto h-12 md:h-10" />}>
               <Plus className="mr-2 h-4 w-4" /> Record Party Payment
             </DialogTrigger>
-          <DialogContent className="sm:max-w-[425px] rounded-[32px]">
+          <DialogContent className="sm:max-w-[425px] rounded-[32px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="font-serif text-2xl">Record Receipt</DialogTitle>
             </DialogHeader>
@@ -1016,7 +1018,7 @@ export function PartyLedger() {
                         type="date" 
                         value={startDate} 
                         onChange={e => setStartDate(e.target.value)}
-                        className="rounded-xl border-gray-150 h-10 text-xs text-gray-600 bg-gray-50/30"
+                        className="rounded-xl border-gray-150 h-10 text-xs text-gray-600 bg-gray-50/30 font-sans"
                       />
                     </div>
                     <div className="space-y-1.5">
@@ -1025,7 +1027,7 @@ export function PartyLedger() {
                         type="date" 
                         value={endDate} 
                         onChange={e => setEndDate(e.target.value)}
-                        className="rounded-xl border-gray-150 h-10 text-xs text-gray-600 bg-gray-50/30"
+                        className="rounded-xl border-gray-150 h-10 text-xs text-gray-600 bg-gray-50/30 font-sans"
                       />
                     </div>
                   </div>
@@ -1051,14 +1053,6 @@ export function PartyLedger() {
                       <span>Download CSV</span>
                     </Button>
                     <Button
-                      onClick={() => setShowConfig(!showConfig)}
-                      variant="outline"
-                      className={`border-[#5A5A40] text-[#5A5A40] hover:bg-amber-50/30 rounded-full h-10 text-xs flex items-center gap-1.5 px-4 font-serif ${showConfig ? 'bg-amber-50/50' : ''}`}
-                    >
-                      <Settings className="h-3.5 w-3.5" />
-                      <span>Format PDF</span>
-                    </Button>
-                    <Button
                       onClick={handlePrintPDF}
                       className="bg-[#5A5A40] hover:bg-[#4A4A30] text-white rounded-full h-10 text-xs flex items-center gap-1.5 px-4 font-serif"
                     >
@@ -1068,89 +1062,6 @@ export function PartyLedger() {
                   </div>
                 </div>
 
-                {showConfig && (
-                  <div className="p-5 bg-amber-50/20 border-t border-gray-100 rounded-b-[20px] grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                    <div className="space-y-1">
-                      <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900">Press / Business Name</Label>
-                      <Input 
-                        value={pressDetails.name} 
-                        onChange={e => setPressDetails({...pressDetails, name: e.target.value.toUpperCase()})}
-                        className="bg-white h-9 text-xs border-gray-200"
-                        id="ledger-press-name"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900">Phone Contacts</Label>
-                      <Input 
-                        value={pressDetails.phone} 
-                        onChange={e => setPressDetails({...pressDetails, phone: e.target.value})}
-                        className="bg-white h-9 text-xs border-gray-200"
-                        id="ledger-press-phone"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900">Press Address</Label>
-                      <Input 
-                        value={pressDetails.address} 
-                        onChange={e => setPressDetails({...pressDetails, address: e.target.value})}
-                        className="bg-white h-9 text-xs border-gray-200"
-                        id="ledger-press-address"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900">Email Address</Label>
-                      <Input 
-                        value={pressDetails.email} 
-                        onChange={e => setPressDetails({...pressDetails, email: e.target.value})}
-                        className="bg-white h-9 text-xs border-gray-200"
-                        id="ledger-press-email"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900">GSTIN Number</Label>
-                      <Input 
-                        value={pressDetails.gstNumber} 
-                        onChange={e => setPressDetails({...pressDetails, gstNumber: e.target.value})}
-                        className="bg-white h-9 text-xs border-gray-200"
-                        id="ledger-press-gst"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900">Invoice No. Prefix</Label>
-                      <Input 
-                        value={pressDetails.invoicePrefix} 
-                        onChange={e => setPressDetails({...pressDetails, invoicePrefix: e.target.value})}
-                        className="bg-white h-9 text-xs border-gray-200"
-                        id="ledger-press-prefix"
-                      />
-                    </div>
-                    <div className="md:col-span-2 border-t border-amber-100 pt-4 mt-2">
-                      <div className="flex flex-wrap gap-6 items-center bg-white p-2.5 rounded-lg border border-amber-100/50">
-                        <Label className="text-[10px] font-bold uppercase tracking-wider text-amber-900 mr-2 font-sans">Toggle Footer Sections:</Label>
-                        
-                        <label className="flex items-center gap-2 text-xs font-medium text-gray-700 cursor-pointer">
-                          <input 
-                            type="checkbox" 
-                            checked={showTerms} 
-                            onChange={e => updateLedgerSetting('showTerms', e.target.checked)}
-                            className="rounded border-gray-300 text-[#5A5A40] focus:ring-[#5A5A40]" 
-                          />
-                          Statement Notes & Terms
-                        </label>
-
-                        <label className="flex items-center gap-2 text-xs font-medium text-gray-700 cursor-pointer">
-                          <input 
-                            type="checkbox" 
-                            checked={showSignature} 
-                            onChange={e => updateLedgerSetting('showSignature', e.target.checked)}
-                            className="rounded border-gray-300 text-[#5A5A40] focus:ring-[#5A5A40]" 
-                          />
-                          Authorized Signatory Slot
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </Card>
 
               {/* Transactions Ledger Table */}
@@ -1182,7 +1093,7 @@ export function PartyLedger() {
                         {startDate && (
                           <TableRow className="bg-gray-50/50 border-gray-100/50 hover:bg-gray-50/80 transition-colors">
                             <TableCell className="pl-4 md:pl-6 text-xs text-gray-400 font-mono">
-                              {format(new Date(startDate + 'T00:00:00'), 'dd MMM yyyy')}
+                              {format(new Date(startDate + 'T00:00:00'), 'dd-MM-yy')}
                             </TableCell>
                             <TableCell>
                               <span className="inline-flex items-center text-[10px] font-bold bg-gray-100 text-gray-500 rounded-full px-2 py-0.5 border border-gray-200/50">
@@ -1207,7 +1118,7 @@ export function PartyLedger() {
                         {transactions.map((tr) => (
                           <TableRow key={tr.id} className="group border-gray-100/50 hover:bg-gray-50/50 transition-colors">
                             <TableCell className="pl-4 md:pl-6 text-xs text-gray-500 font-mono">
-                              {format(new Date(tr.date), 'dd MMM yyyy')}
+                              {format(new Date(tr.date), 'dd-MM-yy')}
                             </TableCell>
                             <TableCell>
                               {tr.type === 'debit' ? (
@@ -1222,14 +1133,7 @@ export function PartyLedger() {
                             </TableCell>
                             <TableCell className="py-3 md:py-4">
                               <div className="flex flex-col">
-                                <span className="text-gray-800 font-medium text-xs md:text-sm">{tr.title}</span>
-                                {tr.details && tr.details.length > 0 && (
-                                  <div className="text-[10px] text-gray-400 mt-1 space-y-0.5">
-                                    {tr.details.map((d: string, di: number) => (
-                                      <div key={di}>• {d}</div>
-                                    ))}
-                                  </div>
-                                )}
+                                <span className="text-gray-800 font-semibold text-xs md:text-sm">{tr.title}</span>
                               </div>
                             </TableCell>
                             <TableCell className="text-right font-mono text-xs md:text-sm text-red-600">
@@ -1283,7 +1187,7 @@ export function PartyLedger() {
                             </h4>
                           </div>
                           <span className="text-xs font-mono text-gray-400">
-                            {format(new Date(startDate + 'T00:00:00'), 'dd MMM yyyy')}
+                            {format(new Date(startDate + 'T00:00:00'), 'dd-MM-yy')}
                           </span>
                         </div>
                         <div className="flex justify-between items-center pt-2 border-t border-gray-150/40">
@@ -1310,17 +1214,10 @@ export function PartyLedger() {
                                 </span>
                               )}
                               <span className="text-[10px] font-mono text-gray-400">
-                                {format(new Date(tr.date), 'dd MMM yyyy')}
+                                {format(new Date(tr.date), 'dd-MM-yy')}
                               </span>
                             </div>
                             <h4 className="text-sm font-semibold text-gray-800 mt-1.5 break-words leading-snug">{tr.title}</h4>
-                            {tr.details && tr.details.length > 0 && (
-                              <div className="text-[11px] text-gray-400 mt-1 space-y-0.5 pl-1.5 border-l border-gray-100">
-                                {tr.details.map((d: string, di: number) => (
-                                  <div key={di} className="truncate">✓ {d}</div>
-                                ))}
-                              </div>
-                            )}
                           </div>
                           
                           <div className="text-right shrink-0">

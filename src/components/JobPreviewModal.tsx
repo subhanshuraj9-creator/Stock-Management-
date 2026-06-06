@@ -341,7 +341,7 @@ export function JobPreviewModal({ isOpen, onClose, job: initialJob, stocks, jobs
                       </div>
                       <div className="space-y-0.5">
                         <span className="text-[9px] uppercase tracking-wider text-gray-400 font-bold">Entry Date</span>
-                        <p className="font-medium text-gray-800">{format(job.date, 'MMM dd, yyyy')}</p>
+                        <p className="font-medium text-gray-800">{format(job.date, 'dd-MM-yy')}</p>
                       </div>
                       <div className="space-y-0.5 col-span-2">
                         <span className="text-[9px] uppercase tracking-wider text-gray-400 font-bold">Ordered Qty</span>

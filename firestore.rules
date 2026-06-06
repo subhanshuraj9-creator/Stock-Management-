@@ -1,5 +1,5 @@
 rules_version = '2';
-// Version 1.0.1
+// Version 1.0.2
 service cloud.firestore {
   match /databases/{database}/documents {
     // ===============================================================
@@ -33,6 +33,8 @@ service cloud.firestore {
     //   - date: number (timestamp)
     //   - weight: number
     //   - count: number
+    //   - quantity: number
+    //   - stockType: string
     //   - notes: string (optional)
     //
     // Collection: stockHistory
@@ -45,6 +47,7 @@ service cloud.firestore {
     //   - previousQuantity: number
     //   - newQuantity: number
     //   - notes: string (optional)
+    //   - jobId: string (optional)
     //
     // ===============================================================
 
@@ -73,21 +76,27 @@ service cloud.firestore {
 
     function isValidStock(data) {
       return hasRequiredFields(data, ['name', 'quantity', 'type', 'lastUpdated']) &&
-             hasOnlyAllowedFields(data, ['name', 'gsm', 'size', 'quantity', 'type', 'lastUpdated', 'inkContainers', 'defaultRate', 'paperType']) &&
+             hasOnlyAllowedFields(data, ['id', 'name', 'gsm', 'size', 'quantity', 'type', 'lastUpdated', 'inkContainers', 'defaultRate', 'paperType', 'unit', 'brand', 'millName', 'shade', 'notes']) &&
              data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
-             (!('gsm' in data) || (data.gsm is number && data.gsm > 0)) &&
-             (!('size' in data) || (data.size is string && data.size.size() >= 1 && data.size.size() <= 50)) &&
+             (!('id' in data) || data.id == null || data.id is string) &&
+             (!('gsm' in data) || data.gsm == null || data.gsm == "" || (data.gsm is number && data.gsm > 0)) &&
+             (!('size' in data) || data.size == null || (data.size is string && data.size.size() >= 0 && data.size.size() <= 100)) &&
              data.quantity is number && data.quantity >= 0 &&
              data.type in ['paper', 'board', 'ink', 'plate'] &&
              (!('inkContainers' in data) || (data.inkContainers is list)) &&
              data.lastUpdated is number &&
-             (!('defaultRate' in data) || (data.defaultRate is number && data.defaultRate >= 0)) &&
-             (!('paperType' in data) || (data.paperType is string && data.paperType.size() >= 1 && data.paperType.size() <= 100));
+             (!('defaultRate' in data) || data.defaultRate == null || data.defaultRate == "" || (data.defaultRate is number && data.defaultRate >= 0)) &&
+             (!('paperType' in data) || data.paperType == null || (data.paperType is string && data.paperType.size() >= 0 && data.paperType.size() <= 100)) &&
+             (!('unit' in data) || data.unit == null || (data.unit is string && data.unit.size() >= 0 && data.unit.size() <= 100)) &&
+             (!('brand' in data) || data.brand == null || (data.brand is string && data.brand.size() >= 0 && data.brand.size() <= 100)) &&
+             (!('millName' in data) || data.millName == null || (data.millName is string && data.millName.size() >= 0 && data.millName.size() <= 100)) &&
+             (!('shade' in data) || data.shade == null || (data.shade is string && data.shade.size() >= 0 && data.shade.size() <= 100)) &&
+             (!('notes' in data) || data.notes == null || (data.notes is string && data.notes.size() >= 0 && data.notes.size() <= 2000));
     }
 
     function isValidJob(data) {
       return hasRequiredFields(data, ['clientName', 'jobDescription', 'date', 'items']) &&
-             hasOnlyAllowedFields(data, ['clientName', 'jobDescription', 'date', 'items', 'platesUsed', 'processCharges', 'orderedQuantity', 'dispatches', 'dispatchStatus', 'isJoint', 'jointRef', 'previewImage', 'lamination']) &&
+             hasOnlyAllowedFields(data, ['clientName', 'jobDescription', 'date', 'items', 'platesUsed', 'processCharges', 'orderedQuantity', 'dispatches', 'dispatchStatus', 'isJoint', 'jointRef', 'jointJobType', 'sharedRunId', 'jointParentId', 'previewImage', 'lamination', 'isRepeat', 'repeatRef']) &&
              data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 100 &&
              data.jobDescription is string && data.jobDescription.size() >= 1 && data.jobDescription.size() <= 1000 &&
              data.date is number &&
@@ -99,6 +108,8 @@ service cloud.firestore {
              (!('dispatchStatus' in data) || (data.dispatchStatus in ['pending', 'partial', 'completed'])) &&
              (!('isJoint' in data) || (data.isJoint is bool)) &&
              (!('jointRef' in data) || (data.jointRef is string)) &&
+             (!('isRepeat' in data) || (data.isRepeat is bool)) &&
+             (!('repeatRef' in data) || (data.repeatRef is string)) &&
              (!('previewImage' in data) || (data.previewImage is string && data.previewImage.size() <= 1048576)) &&
              (!('lamination' in data) || (data.lamination is map));
     }
@@ -113,18 +124,20 @@ service cloud.firestore {
     }
 
     function isValidInkUsage(data) {
-      return hasRequiredFields(data, ['inkId', 'date', 'weight', 'count']) &&
-             hasOnlyAllowedFields(data, ['inkId', 'date', 'weight', 'count', 'notes']) &&
+      return hasRequiredFields(data, ['inkId', 'date', 'quantity', 'stockType']) &&
+             hasOnlyAllowedFields(data, ['inkId', 'date', 'weight', 'count', 'quantity', 'stockType', 'notes']) &&
              data.inkId is string &&
              data.date is number &&
-             data.weight is number && data.weight > 0 &&
-             data.count is number && data.count > 0 &&
+             data.quantity is number &&
+             data.stockType is string &&
+             (!('weight' in data) || data.weight == null || (data.weight is number && data.weight > 0)) &&
+             (!('count' in data) || data.count == null || (data.count is number && data.count > 0)) &&
              (!('notes' in data) || (data.notes is string));
     }
 
     function isValidStockHistory(data) {
       return hasRequiredFields(data, ['stockId', 'date', 'type', 'quantity', 'previousQuantity', 'newQuantity']) &&
-             hasOnlyAllowedFields(data, ['stockId', 'date', 'type', 'quantity', 'previousQuantity', 'newQuantity', 'notes', 'purchaseRate', 'supplier', 'invoiceNo']) &&
+             hasOnlyAllowedFields(data, ['stockId', 'date', 'type', 'quantity', 'previousQuantity', 'newQuantity', 'notes', 'purchaseRate', 'supplier', 'invoiceNo', 'jobId']) &&
              data.stockId is string &&
              data.date is number &&
              data.type in ['addition', 'usage'] &&
@@ -134,7 +147,8 @@ service cloud.firestore {
              (!('notes' in data) || (data.notes is string)) &&
              (!('purchaseRate' in data) || (data.purchaseRate is number && data.purchaseRate >= 0)) &&
              (!('supplier' in data) || (data.supplier is string)) &&
-             (!('invoiceNo' in data) || (data.invoiceNo is string));
+             (!('invoiceNo' in data) || (data.invoiceNo is string)) &&
+             (!('jobId' in data) || (data.jobId is string));
     }
 
     function isValidPaperSection(data) {
@@ -151,6 +165,27 @@ service cloud.firestore {
              data.createdAt is number;
     }
 
+    function isValidJointRun(data) {
+      return hasRequiredFields(data, ['sharedRunId', 'paper', 'totalSheetsUsed', 'wastageSheets', 'sharedPlates', 'linkedJobs']) &&
+             data.sharedRunId is string &&
+             data.paper is map &&
+             data.totalSheetsUsed is number &&
+             data.wastageSheets is number &&
+             data.sharedPlates is list &&
+             data.linkedJobs is list;
+    }
+
+    function isValidJointRunAuditLog(data) {
+      return hasRequiredFields(data, ['sharedRunId', 'userEmail', 'changedField', 'oldValue', 'newValue', 'affectedJobs', 'timestamp']) &&
+             data.sharedRunId is string &&
+             data.userEmail is string &&
+             data.changedField is string &&
+             data.oldValue is string &&
+             data.newValue is string &&
+             data.affectedJobs is list &&
+             data.timestamp is number;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -159,14 +194,14 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidStock(request.resource.data);
       allow update: if isAuthenticated() && isValidStock(request.resource.data);
-      allow delete: if isAuthenticated(); // Changed from isAdmin() to fix delete issue
+      allow delete: if isAuthenticated();
     }
 
     match /jobs/{jobId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidJob(request.resource.data);
       allow update: if isAuthenticated() && isValidJob(request.resource.data);
-      allow delete: if isAuthenticated(); // Changed from isAdmin() to fix delete issue
+      allow delete: if isAuthenticated();
     }
 
     match /inkUsage/{usageId} {
@@ -199,6 +234,20 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidBoardSection(request.resource.data);
       allow update: if isAuthenticated() && isValidBoardSection(request.resource.data);
+      allow delete: if isAuthenticated();
+    }
+
+    match /jointRuns/{sharedRunId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidJointRun(request.resource.data);
+      allow update: if isAuthenticated() && isValidJointRun(request.resource.data);
+      allow delete: if isAuthenticated();
+    }
+
+    match /jointRunAuditLogs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidJointRunAuditLog(request.resource.data);
+      allow update: if isAuthenticated() && isValidJointRunAuditLog(request.resource.data);
       allow delete: if isAuthenticated();
     }
 

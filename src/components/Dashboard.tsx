@@ -86,14 +86,6 @@ export function Dashboard() {
 
   const computeJobDebit = (job: Job, jobsList: Job[], stocksList: StockItem[]) => {
     let paperTotal = 0;
-    job.items.forEach(item => {
-      const hasAutoCalculated = (item.ups !== undefined && item.ups > 0 && job.orderedQuantity && job.orderedQuantity > 0);
-      const billingSheets = hasAutoCalculated 
-        ? Math.ceil(job.orderedQuantity / (item.ups || 1)) 
-        : (item.calculatedSheets !== undefined ? item.calculatedSheets : (item.isJoint ? 0 : item.quantityUsed));
-      const itemCost = ((billingSheets || 0) / 500) * (item.rate || 0);
-      paperTotal += itemCost;
-    });
 
     let plateTotal = 0;
     const platesToProcess = [...(job.platesUsed || [])];
@@ -566,7 +558,7 @@ export function Dashboard() {
                         {isPartial ? 'Partial' : 'Pending'}
                       </span>
                       <div className="text-right mt-1 font-mono">
-                        <p className="text-[10px] md:text-xs text-gray-400">Ordered: {format(job.date, 'MMM dd, yyyy')}</p>
+                        <p className="text-[10px] md:text-xs text-gray-400">Ordered: {format(job.date, 'dd-MM-yy')}</p>
                       </div>
                     </div>
                   </div>

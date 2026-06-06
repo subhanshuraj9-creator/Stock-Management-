@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType, cleanUndefined } from '../firebase';
-import { collection, onSnapshot, addDoc, query, orderBy, runTransaction, doc, writeBatch } from 'firebase/firestore';
-import { Job, StockItem, JobItem } from '../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { db, handleFirestoreError, OperationType, cleanUndefined, auth } from '../firebase';
+import { collection, onSnapshot, addDoc, query, orderBy, runTransaction, doc, writeBatch, getDocs, where } from 'firebase/firestore';
+import { Job, StockItem, JobItem, JointRun, JointRunAuditLog } from '../types';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from './ui/dialog';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { Plus, Search, FileText, Calendar, User, Edit2, Trash2, Truck, Inbox, CheckCircle2, Download, Printer } from 'lucide-react';
+import { Plus, Search, FileText, Calendar, User, Edit2, Trash2, Truck, Inbox, CheckCircle2, Download, Printer, ChevronDown } from 'lucide-react';
 import { Badge } from './ui/badge';
 import { InvoiceModal } from './InvoiceModal';
 import { JobPreviewModal } from './JobPreviewModal';
@@ -34,8 +34,43 @@ const StockSelect = ({
   placeholder,
   disabled
 }: StockSelectProps) => {
+  const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
-  
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    const handleScroll = (event: Event) => {
+      if (isOpen) {
+        // If the scroll happened inside our own dropdown container (e.g. scrolling the options list),
+        // do not close. Only close when scrolling the parent modal/form container.
+        if (containerRef.current && containerRef.current.contains(event.target as Node)) {
+          return;
+        }
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('scroll', handleScroll, { capture: true });
+    }
+    return () => {
+      document.removeEventListener('scroll', handleScroll, { capture: true });
+    };
+  }, [isOpen]);
+
   const filtered = stocks.filter(s => {
     if (s.id === value) return true;
     
@@ -57,44 +92,80 @@ const StockSelect = ({
     : '';
 
   return (
-    <Select 
-      value={value} 
-      onValueChange={onValueChange}
-      onOpenChange={(open) => { if (open) setSearch(''); }}
-      disabled={disabled}
-    >
-      <SelectTrigger className="bg-white">
-        <SelectValue placeholder={placeholder}>
-          {value ? displayLabel : undefined}
-        </SelectValue>
-      </SelectTrigger>
-      <SelectContent>
-        <div className="p-2 sticky top-0 bg-popover z-10 border-b border-gray-100">
-          <Input 
-            placeholder={`Search ${type}...`} 
-            value={search} 
-            onChange={e => setSearch(e.target.value)}
-            onKeyDown={e => e.stopPropagation()}
-            className="h-9 text-sm"
-          />
+    <div className="relative w-full text-left" ref={containerRef}>
+      <button
+        type="button"
+        onClick={() => {
+          if (!disabled) {
+            setIsOpen(!isOpen);
+            setSearch('');
+          }
+        }}
+        className="flex w-full items-center justify-between gap-1.5 rounded-lg border border-gray-200 bg-white py-2 px-3 text-sm h-9 cursor-pointer hover:border-gray-300 transition-colors disabled:cursor-not-allowed disabled:opacity-50 text-left"
+        disabled={disabled}
+      >
+        <span className="truncate text-gray-700">
+          {value ? displayLabel : <span className="text-gray-400">{placeholder}</span>}
+        </span>
+        <ChevronDown className="pointer-events-none size-4 text-gray-400 shrink-0" />
+      </button>
+
+      {isOpen && (
+        <div className="absolute z-50 left-0 right-0 mt-1 rounded-lg bg-white border border-gray-200 shadow-xl max-h-72 flex flex-col overflow-hidden animate-fadeIn">
+          <div className="p-2 border-b border-gray-100 bg-gray-50 flex items-center gap-1.5">
+            <Search className="h-4 w-4 text-gray-400 shrink-0 ml-1" />
+            <input 
+              type="text"
+              autoFocus
+              placeholder={`Search ${type}...`} 
+              value={search} 
+              onChange={e => setSearch(e.target.value)}
+              className="w-full bg-transparent border-0 outline-none p-0 text-sm h-8"
+              onKeyDown={e => {
+                if (e.key === ' ') {
+                  e.stopPropagation();
+                }
+              }}
+            />
+          </div>
+          
+          <div className="overflow-y-auto max-h-56 divide-y divide-gray-50">
+            {filtered.length === 0 ? (
+              <div className="p-4 text-center text-xs text-gray-400 italic">
+                No matching {type} found. Ensure they are configured in Stock Management.
+              </div>
+            ) : (
+              filtered.map(s => {
+                const itemLabel = `${s.name} ${type === 'paper' ? `(${s.gsm ? `${s.gsm} GSM, ` : ''}${s.size || ''})` : (s.size ? `(${s.size})` : '')}`;
+                const isSelected = s.id === value;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                    }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      onValueChange(s.id);
+                      setIsOpen(false);
+                    }}
+                    className={`flex justify-between items-center w-full px-3 py-2.5 text-xs text-left cursor-pointer hover:bg-gray-50 transition-colors ${
+                      isSelected ? 'bg-indigo-50/70 text-indigo-700 font-semibold' : 'text-gray-700'
+                    }`}
+                  >
+                    <span className="truncate pr-2">{itemLabel}</span>
+                    <span className="text-[10px] font-mono bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded shrink-0">
+                      {s.quantity} left
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
         </div>
-        <SelectGroup>
-          {filtered.map(s => {
-            const itemLabel = `${s.name} ${type === 'paper' ? `(${s.gsm ? `${s.gsm} GSM, ` : ''}${s.size || ''})` : (s.size ? `(${s.size})` : '')}`;
-            return (
-              <SelectItem key={s.id} value={s.id}>
-                <div className="flex justify-between items-center w-full gap-2 overflow-hidden">
-                  <span className="truncate">{itemLabel}</span>
-                  <span className="text-[10px] font-medium bg-gray-100 px-1.5 py-0.5 rounded-full shrink-0 [[data-slot=select-value]_&]:hidden">
-                    {s.quantity} left
-                  </span>
-                </div>
-              </SelectItem>
-            );
-          })}
-        </SelectGroup>
-      </SelectContent>
-    </Select>
+      )}
+    </div>
   );
 };
 
@@ -103,6 +174,14 @@ const getInitialProcessCharges = () => [
   { id: 'cutting', name: 'Cutting', amount: 0, notes: '' },
   { id: 'folding', name: 'Folding', amount: 0, notes: '' },
   { id: 'binding', name: 'Binding', amount: 0, notes: '' }
+];
+
+const getInitialSelectedItems = () => [
+  { stockId: '', quantityUsed: 0, ups: 1, isJoint: false, paperRef: '', paperRate: 0 }
+];
+
+const getInitialPlatesUsed = () => [
+  { plateId: '', count: 0, isJoint: false, plateRef: '', rate: 0, isAdditionalPlate: false }
 ];
 
 const loadProcessChargesForEditing = (job: Job) => {
@@ -122,7 +201,10 @@ const loadProcessChargesForEditing = (job: Job) => {
 };
 
 export function JobManagement() {
-  const [jobs, setJobs] = useState<Job[]>([]);
+  const [rawJobs, setRawJobs] = useState<Job[]>([]);
+  const [jointRuns, setJointRuns] = useState<JointRun[]>([]);
+  const [auditLogs, setAuditLogs] = useState<JointRunAuditLog[]>([]);
+  const [isAuditLogsOpen, setIsAuditLogsOpen] = useState(false);
   const [stocks, setStocks] = useState<StockItem[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -132,6 +214,10 @@ export function JobManagement() {
   const [previewJob, setPreviewJob] = useState<Job | null>(null);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
+
+  const jobs = useMemo(() => {
+    return synchronizeJobsData(rawJobs, jointRuns);
+  }, [rawJobs, jointRuns]);
 
   // Dispatch tracking states
   const [selectedJobForDispatch, setSelectedJobForDispatch] = useState<Job | null>(null);
@@ -172,24 +258,286 @@ export function JobManagement() {
   const [formData, setFormData] = useState({
     clientName: '',
     jobDescription: '',
-    selectedItems: [] as JobItem[],
-    platesUsed: [] as { plateId: string; count: number; isJoint?: boolean; plateRef?: string; rate?: number; isReused?: boolean; isCancelled?: boolean; cancelledColor?: string; isAdditionalPlate?: boolean; }[],
+    selectedItems: getInitialSelectedItems() as JobItem[],
+    platesUsed: getInitialPlatesUsed() as { plateId: string; count: number; isJoint?: boolean; plateRef?: string; rate?: number; isReused?: boolean; isCancelled?: boolean; cancelledColor?: string; isAdditionalPlate?: boolean; }[],
     processCharges: getInitialProcessCharges(),
     lamination: getInitialLamination(),
     ignoreStockLimits: false,
     orderedQuantity: '' as string | number,
     isJoint: false,
+    jointJobType: '' as 'master' | 'linked' | '',
+    sharedRunId: '',
+    jointParentId: '',
     jointRef: '',
     isRepeat: false,
     repeatRef: '',
-    date: new Date().toISOString().split('T')[0]
+    date: new Date().toISOString().split('T')[0],
+    paperBillingMethod: '' as '100sheets' | 'gross' | 'ream' | 'custom' | '',
+    paperBillingRate: 0,
+    paperBillingAmount: 0
   });
+
+  function getJobRunId(job: any): string {
+    if (job.sharedRunId) return job.sharedRunId.trim().toUpperCase();
+    if (job.isJoint) {
+      if (job.jointRef) {
+        return job.jointRef.trim().toUpperCase().replace('#', '');
+      }
+      if (job.id) {
+        return job.id.slice(-4).toUpperCase();
+      }
+    }
+    return '';
+  }
+
+  function synchronizeJobsData(allJobs: any[], allJointRuns: JointRun[] = jointRuns): any[] {
+    // 1. Resolve paper/rate copy & alignment across groups based on JointRuns first
+    const jobsWithResolvedJoints = allJobs.map(job => {
+      const resolvedJob = {
+        ...job,
+        items: (job.items || []).map((it: any) => ({ ...it })),
+        platesUsed: (job.platesUsed || []).map((it: any) => ({ ...it }))
+      };
+
+      if (resolvedJob.isJoint && resolvedJob.sharedRunId) {
+        // Find JointRun
+        const jr = allJointRuns.find(r => r.sharedRunId === resolvedJob.sharedRunId);
+        if (jr) {
+          // Merge Paper Stock, Total Sheets Used, Wastage Sheets, Size, Section, Notes
+          resolvedJob.items = (resolvedJob.items || []).map((it: any) => {
+            return {
+              ...it,
+              stockId: jr.paper?.stockId || it.stockId,
+              quantityUsed: jr.totalSheetsUsed !== undefined ? jr.totalSheetsUsed : it.quantityUsed,
+              wastageSheets: jr.wastageSheets !== undefined ? jr.wastageSheets : it.wastageSheets,
+              paperRate: jr.paper?.paperRate !== undefined ? jr.paper.paperRate : it.paperRate,
+              isJoint: true,
+              paperRef: jr.sharedRunId
+            };
+          });
+
+          // If items helper is empty, initialize it!
+          if (resolvedJob.items.length === 0) {
+            resolvedJob.items = [{
+              stockId: jr.paper?.stockId || '',
+              quantityUsed: jr.totalSheetsUsed !== undefined ? jr.totalSheetsUsed : 0,
+              wastageSheets: jr.wastageSheets !== undefined ? jr.wastageSheets : 0,
+              paperRate: jr.paper?.paperRate !== undefined ? jr.paper.paperRate : 0,
+              ups: 1,
+              isJoint: true,
+              paperRef: jr.sharedRunId
+            }];
+          }
+
+          // Populate paper details
+          resolvedJob.paperSize = jr.paper?.paperSize || '';
+          resolvedJob.paperSection = jr.paper?.paperSection || '';
+          resolvedJob.paperNotes = jr.paper?.paperNotes || '';
+          resolvedJob.productionNotes = jr.paper?.productionNotes || '';
+
+          // Merge plates
+          const nonJointPlates = (job.platesUsed || []).filter((p: any) => !p.isJoint);
+          const sharedPlates = (jr.sharedPlates || []).map((p: any) => ({
+            ...p,
+            isJoint: true,
+            plateRef: jr.sharedRunId
+          }));
+          resolvedJob.platesUsed = [...sharedPlates, ...nonJointPlates];
+        }
+      }
+      return resolvedJob;
+    });
+
+    // 2. Identify modern and legacy groups
+    const runIdToGroupJobs = new Map<string, any[]>();
+    jobsWithResolvedJoints.forEach(job => {
+      const runId = getJobRunId(job);
+      if (runId) {
+        if (!runIdToGroupJobs.has(runId)) {
+          runIdToGroupJobs.set(runId, []);
+        }
+        runIdToGroupJobs.get(runId)!.push(job);
+      }
+    });
+
+    // For any group, if there is no matching JointRun, we do the fallback in-memory synchronization
+    runIdToGroupJobs.forEach((group, runId) => {
+      const hasRealRun = allJointRuns.some(r => r.sharedRunId === runId);
+      if (!hasRealRun) {
+        const masterJob = group.find(j => j.jointJobType === 'master') || 
+                          group.find(j => j.id && j.id.slice(-4).toUpperCase() === runId) ||
+                          group[0];
+
+        if (masterJob) {
+          group.forEach(job => {
+            if (job.id !== masterJob.id) {
+              job.items = (masterJob.items || []).map((masterItem: any, idx: number) => {
+                const currentItem = job.items?.[idx] || {};
+                return {
+                  ...currentItem,
+                  stockId: masterItem.stockId,
+                  paperRate: masterItem.paperRate || 0,
+                  quantityUsed: masterItem.quantityUsed || 0,
+                  wastageSheets: masterItem.wastageSheets || 0,
+                  isJoint: true,
+                  paperRef: runId
+                };
+              });
+            }
+          });
+        }
+      }
+
+      // Re-calculate ordered quantities and allocations inside group
+      const firstJob = group[0];
+      if (firstJob) {
+        const firstItems = firstJob.items || [];
+        firstItems.forEach((fItem: any, idx: number) => {
+          const masterActual = Number(fItem.quantityUsed) || 0;
+
+          let totalTheoretical = 0;
+          const jobToTheoretical = new Map<string, number>();
+
+          group.forEach(job => {
+            const item = job.items?.[idx];
+            if (item) {
+              const ups = Number(item.ups) || 1;
+              const actualUsed = Number(item.quantityUsed) || 0;
+              const theoretical = actualUsed * ups;
+              jobToTheoretical.set(job.id, theoretical);
+              totalTheoretical += theoretical;
+            }
+          });
+
+          group.forEach(job => {
+            const item = job.items?.[idx];
+            if (item) {
+              const theoretical = jobToTheoretical.get(job.id) || 0;
+              let allocated = 0;
+              if (totalTheoretical > 0) {
+                allocated = Math.round((theoretical / totalTheoretical) * masterActual);
+              }
+              item.allocatedPaper = allocated;
+            }
+          });
+        });
+
+        // Compute orderedQuantity for each job
+        group.forEach(job => {
+          job.orderedQuantity = (job.items || []).reduce((acc: number, item: any) => {
+            return acc + (Number(item.quantityUsed || 0) * (Number(item.ups) || 1));
+          }, 0);
+        });
+      }
+    });
+
+    // 3. For standard jobs, allocatedPaper = quantityUsed
+    jobsWithResolvedJoints.forEach(job => {
+      const inJointGroup = Array.from(runIdToGroupJobs.values()).some(group => 
+        group.some(gj => gj.id === job.id)
+      );
+
+      if (!inJointGroup) {
+        job.items = (job.items || []).map((item: any) => ({
+          ...item,
+          allocatedPaper: Number(item.quantityUsed) || 0
+        }));
+        job.orderedQuantity = (job.items || []).reduce((acc: number, item: any) => {
+          return acc + (Number(item.quantityUsed || 0) * (Number(item.ups) || 1));
+        }, 0);
+      }
+    });
+
+    return jobsWithResolvedJoints;
+  };
+
+  const recalculateAllocatedPapersForForm = (tempFormData: any, allJobs: any[]): JobItem[] => {
+    const currentId = tempFormData.id || "TEMP_EDIT_JOB_ID_XXXX";
+    const withTempJob = [{ 
+      ...tempFormData, 
+      id: currentId,
+      items: tempFormData.selectedItems ? [...tempFormData.selectedItems] : [],
+      isJoint: !!tempFormData.isJoint,
+      jointJobType: tempFormData.jointJobType,
+      sharedRunId: tempFormData.sharedRunId,
+      jointRef: tempFormData.jointRef
+    }];
+    
+    allJobs.forEach(job => {
+      if (job.id !== tempFormData.id) {
+        withTempJob.push(job);
+      }
+    });
+
+    const synchronized = synchronizeJobsData(withTempJob, jointRuns);
+    const resolvedTempJob = synchronized.find(j => j.id === currentId);
+    return resolvedTempJob?.items || tempFormData.selectedItems || [];
+  };
+
+  const getPaperQuantityForBilling = (tempForm: any, allJobs: any[]): number => {
+    const resolvedItems = recalculateAllocatedPapersForForm(tempForm, allJobs);
+    return resolvedItems.reduce((sum, item) => {
+      if (tempForm.isJoint) {
+        return sum + (item.allocatedPaper || 0);
+      } else {
+        return sum + (Number(item.quantityUsed) || 0);
+      }
+    }, 0);
+  };
+
+  const calculatePaperBillingAmount = (method: string, rate: number, qty: number): number => {
+    if (method === 'custom') {
+      return 0; // Handled as manual input directly
+    }
+    if (!method || !rate || !qty) return 0;
+    let calculated = 0;
+    switch (method) {
+      case '100sheets':
+        calculated = (qty / 100) * rate;
+        break;
+      case 'gross':
+        calculated = (qty / 144) * rate;
+        break;
+      case 'ream':
+        calculated = (qty / 500) * rate;
+        break;
+      default:
+        calculated = 0;
+    }
+    return Math.round(calculated * 100) / 100;
+  };
+
+  useEffect(() => {
+    const billingMethod = formData.paperBillingMethod;
+    const billingRate = formData.paperBillingRate;
+    
+    if (billingMethod === 'custom' || !billingMethod) {
+      // In custom or undefined state, we do not run automatic calculations.
+      return;
+    }
+    
+    const qty = getPaperQuantityForBilling(formData, rawJobs);
+    const calculatedAmt = calculatePaperBillingAmount(billingMethod, Number(billingRate) || 0, qty);
+    
+    if (formData.paperBillingAmount !== calculatedAmt) {
+      setFormData(prev => ({
+        ...prev,
+        paperBillingAmount: calculatedAmt
+      }));
+    }
+  }, [
+    formData.paperBillingMethod,
+    formData.paperBillingRate,
+    formData.isJoint,
+    JSON.stringify(formData.selectedItems),
+    rawJobs.length
+  ]);
 
   useEffect(() => {
     const jobsQ = query(collection(db, 'jobs'), orderBy('date', 'desc'));
     const unsubscribeJobs = onSnapshot(jobsQ, (snapshot) => {
       const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job));
-      setJobs(items);
+      setRawJobs(items);
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'jobs');
     });
@@ -202,9 +550,28 @@ export function JobManagement() {
       handleFirestoreError(error, OperationType.LIST, 'stocks');
     });
 
+    const jointRunsQ = query(collection(db, 'jointRuns'));
+    const unsubscribeJointRuns = onSnapshot(jointRunsQ, (snapshot) => {
+      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JointRun));
+      setJointRuns(items);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'jointRuns');
+    });
+
+    const auditLogsQ = query(collection(db, 'jointRunAuditLogs'));
+    const unsubscribeAuditLogs = onSnapshot(auditLogsQ, (snapshot) => {
+      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JointRunAuditLog));
+      const sorted = [...items].sort((a, b) => b.timestamp - a.timestamp);
+      setAuditLogs(sorted);
+    }, (error) => {
+      console.warn("Audit logs error: ", error);
+    });
+
     return () => {
       unsubscribeJobs();
       unsubscribeStocks();
+      unsubscribeJointRuns();
+      unsubscribeAuditLogs();
     };
   }, []);
 
@@ -218,10 +585,7 @@ export function JobManagement() {
         { 
           stockId: '', 
           quantityUsed: 0, 
-          rate: 0,
-          ups: undefined,
-          autoCalculate: isJoint,
-          calculatedSheets: undefined,
+          ups: 1,
           isJoint: isJoint,
           paperRef: jointRef
         }
@@ -236,32 +600,9 @@ export function JobManagement() {
   };
 
   const handleOrderedQuantityChange = (val: string) => {
-    const ordered = Number(val) || 0;
-    const updatedItems = formData.selectedItems.map(item => {
-      if (!formData.isJoint) {
-        return {
-          ...item,
-          ups: undefined,
-          calculatedSheets: undefined,
-          autoCalculate: false
-        };
-      }
-      
-      const upsVal = Number(item.ups) || 1;
-      const calculated = upsVal > 0 ? Math.ceil(ordered / upsVal) : 0;
-      
-      const updatedItem = {
-        ...item,
-        calculatedSheets: calculated
-      };
-      
-      // Only overwrite the actual physical quantityUsed if auto-calculate is on AND it is NOT a joint paper run
-      if (item.autoCalculate && !item.isJoint) {
-        updatedItem.quantityUsed = calculated;
-      }
-      return updatedItem;
-    });
-    setFormData({ ...formData, orderedQuantity: val, selectedItems: updatedItems });
+    const tempForm = { ...formData, orderedQuantity: val };
+    const finalItems = recalculateAllocatedPapersForForm(tempForm, jobs);
+    setFormData({ ...tempForm, selectedItems: finalItems });
   };
 
   const applyJointRefAndAutoDetect = (refCode: string, items = formData.selectedItems, plates = formData.platesUsed) => {
@@ -273,9 +614,8 @@ export function JobManagement() {
     if (updatedItems.length === 0) {
       updatedItems = [{
         stockId: '',
-        rate: 0,
         quantityUsed: 0,
-        calculatedSheets: 0,
+        ups: 1,
         isJoint: true,
         paperRef: refCode
       }];
@@ -288,14 +628,12 @@ export function JobManagement() {
         paperRef: refCode
       };
       
-      if (matchingJob && idx === 0) {
-        const matchingItem = matchingJob.items?.[0];
+      if (matchingJob) {
+        const matchingItem = matchingJob.items?.[idx];
         if (matchingItem) {
           updatedItem.stockId = matchingItem.stockId || '';
-          updatedItem.rate = matchingItem.rate || 0;
-          updatedItem.ups = matchingItem.ups;
           updatedItem.quantityUsed = matchingItem.quantityUsed || 0;
-          updatedItem.calculatedSheets = matchingItem.calculatedSheets || 0;
+          updatedItem.ups = item.ups !== undefined ? item.ups : 1;
         }
       }
       return updatedItem;
@@ -334,13 +672,15 @@ export function JobManagement() {
       });
     }
 
-    setFormData({
+    const tempForm = {
       ...formData,
       isJoint: true,
       jointRef: refCode,
       selectedItems: updatedItems,
       platesUsed: updatedPlates
-    } as any);
+    };
+    const finalItems = recalculateAllocatedPapersForForm(tempForm, jobs);
+    setFormData({ ...tempForm, selectedItems: finalItems } as any);
 
     if (matchingJob && cleanRef.length === 4) {
       const matchedPaperStock = stocks.find(s => s.id === matchingJob.items?.[0]?.stockId);
@@ -410,6 +750,7 @@ export function JobManagement() {
     let updatedItems = [...items];
     let clientNameUpdate = formData.clientName;
     let descUpdate = formData.jobDescription;
+    let updatedProcessCharges = formData.processCharges;
 
     if (matchingJob) {
       if (!clientNameUpdate) clientNameUpdate = matchingJob.clientName;
@@ -422,20 +763,24 @@ export function JobManagement() {
 
       // Auto-populate paper stock items
       if (matchingJob.items && matchingJob.items.length > 0) {
-        const ordered = Number(formData.orderedQuantity || matchingJob.orderedQuantity) || 0;
         updatedItems = matchingJob.items.map((item) => {
-          const upsVal = Number(item.ups) || 1;
-          const calculated = upsVal > 0 ? Math.ceil(ordered / upsVal) : 0;
           return {
             stockId: item.stockId || '',
-            rate: item.rate || 0,
-            ups: item.ups,
-            autoCalculate: item.autoCalculate ?? true,
-            calculatedSheets: calculated,
-            quantityUsed: item.autoCalculate ? calculated : item.quantityUsed,
+            ups: item.ups || 1,
+            quantityUsed: 0,
+            allocatedPaper: 0,
             isJoint: false,
             paperRef: ''
           };
+        });
+      }
+
+      // Copy process charges
+      if (matchingJob.processCharges && matchingJob.processCharges.length > 0) {
+        const defaults = getInitialProcessCharges();
+        updatedProcessCharges = defaults.map(def => {
+          const match = matchingJob.processCharges?.find(pc => pc.name.toLowerCase() === def.name.toLowerCase());
+          return match ? { ...def, amount: match.amount, notes: match.notes || '' } : def;
         });
       }
     }
@@ -447,7 +792,8 @@ export function JobManagement() {
       clientName: clientNameUpdate,
       jobDescription: descUpdate,
       selectedItems: updatedItems,
-      platesUsed: updatedPlates
+      platesUsed: updatedPlates,
+      processCharges: updatedProcessCharges
     } as any);
 
     if (matchingJob && cleanRef.length === 4) {
@@ -464,12 +810,17 @@ export function JobManagement() {
       const refValue = (formData as any).repeatRef || '';
       const updatedItems = formData.selectedItems.map(item => ({
         ...item,
+        quantityUsed: 0,
+        allocatedPaper: 0,
         isJoint: false,
         paperRef: ''
       }));
       setFormData({
         ...formData,
         isJoint: false,
+        jointJobType: '',
+        sharedRunId: '',
+        jointParentId: '',
         jointRef: '',
         isRepeat: true,
         repeatRef: refValue,
@@ -479,43 +830,42 @@ export function JobManagement() {
         applyRepeatRefAndAutoDetect(refValue, updatedItems, formData.platesUsed);
       }
     } else if (type === 'joint') {
-      const refValue = (formData as any).jointRef || '';
-      const firstItem = formData.selectedItems[0];
-      const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === refValue.trim().toUpperCase().replace('#', ''));
-      
-      const updatedItems = [{
-        stockId: matchingJob?.items?.[0]?.stockId || firstItem?.stockId || '',
-        rate: matchingJob?.items?.[0]?.rate || firstItem?.rate || 0,
-        quantityUsed: matchingJob?.items?.[0]?.quantityUsed || firstItem?.quantityUsed || 0,
-        calculatedSheets: matchingJob?.items?.[0]?.calculatedSheets || firstItem?.calculatedSheets || 0,
-        ups: matchingJob?.items?.[0]?.ups || firstItem?.ups,
+      const updatedItems = formData.selectedItems.map(item => ({
+        ...item,
         isJoint: true,
-        paperRef: refValue
-      }];
+        ups: item.ups || 1
+      }));
+
+      const updatedPlates = formData.platesUsed.map((p, idx) => ({
+        ...p,
+        isAdditionalPlate: idx > 0 ? true : false
+      }));
 
       setFormData({
         ...formData,
         isJoint: true,
-        jointRef: refValue,
+        jointJobType: 'master', // Default to Master Joint Job
+        sharedRunId: '',
+        jointParentId: '',
+        jointRef: '',
         isRepeat: false,
         repeatRef: '',
-        selectedItems: updatedItems
+        selectedItems: updatedItems,
+        platesUsed: updatedPlates
       } as any);
-      if (refValue) {
-        applyJointRefAndAutoDetect(refValue, updatedItems, formData.platesUsed);
-      }
     } else {
       const updatedItems = formData.selectedItems.map(item => ({
         ...item,
         isJoint: false,
         paperRef: '',
-        ups: undefined,
-        calculatedSheets: undefined,
-        autoCalculate: false
+        ups: undefined
       }));
       setFormData({
         ...formData,
         isJoint: false,
+        jointJobType: '',
+        sharedRunId: '',
+        jointParentId: '',
         jointRef: '',
         isRepeat: false,
         repeatRef: '',
@@ -524,7 +874,8 @@ export function JobManagement() {
           ...p,
           isJoint: false,
           plateRef: '',
-          isReused: false
+          isReused: false,
+          isAdditionalPlate: false
         }))
       } as any);
     }
@@ -540,9 +891,7 @@ export function JobManagement() {
       
       const updatedItems = [{
         stockId: matchingJob?.items?.[0]?.stockId || firstItem?.stockId || '',
-        rate: matchingJob?.items?.[0]?.rate || firstItem?.rate || 0,
         quantityUsed: matchingJob?.items?.[0]?.quantityUsed || firstItem?.quantityUsed || 0,
-        calculatedSheets: matchingJob?.items?.[0]?.calculatedSheets || firstItem?.calculatedSheets || 0,
         ups: matchingJob?.items?.[0]?.ups || firstItem?.ups,
         isJoint: true,
         paperRef: refValue
@@ -605,7 +954,7 @@ export function JobManagement() {
         isJoint: false,
         jointRef: '',
         selectedItems: updatedItems,
-        platesUsed: []
+        platesUsed: getInitialPlatesUsed()
       } as any);
     }
   };
@@ -614,20 +963,63 @@ export function JobManagement() {
     applyJointRefAndAutoDetect(val);
   };
 
+  const handleSelectParentMasterJob = (masterJobId: string) => {
+    if (masterJobId === "none" || !masterJobId) {
+      setFormData({
+        ...formData,
+        jointParentId: '',
+        sharedRunId: '',
+        jointRef: ''
+      } as any);
+      return;
+    }
+    const mj = jobs.find(j => j.id === masterJobId);
+    if (mj) {
+      // Inherit Paper Stock, Paper Rate, Shared Print Run ID from Job A (Master)
+      // but Matter Ups can be typed, and we display the master stock, rate.
+      const masterItems = mj.items || [];
+      const inheritedItems = masterItems.map(item => ({
+        stockId: item.stockId,
+        paperRate: item.paperRate || 0,
+        ups: item.ups || 1, // default to parent's ups
+        quantityUsed: item.quantityUsed || 0, // default to parent's sheets used
+        wastageSheets: item.wastageSheets || 0, // default to parent's wastage sheets
+        isJoint: true,
+        paperRef: mj.id.slice(-4).toUpperCase()
+      }));
+
+      // Set plates used
+      const masterPlates = mj.platesUsed || [];
+      const inheritedPlates = masterPlates.map(p => ({
+        ...p,
+        isJoint: true,
+        plateRef: mj.id.slice(-4).toUpperCase(),
+        isReused: true // Reused since Master pays or shares plates
+      }));
+
+      const autoProdQty = inheritedItems.reduce((acc: number, item: any) => {
+        return acc + (Number(item.quantityUsed || 0) * (Number(item.ups) || 1));
+      }, 0);
+
+      setFormData({
+        ...formData,
+        jointParentId: masterJobId,
+        sharedRunId: mj.sharedRunId || '',
+        jointRef: mj.id.slice(-4).toUpperCase(),
+        selectedItems: inheritedItems,
+        platesUsed: inheritedPlates,
+        orderedQuantity: autoProdQty
+      } as any);
+
+      toast.success(`Inherited paper specs and shared run (${mj.sharedRunId || 'JR???'}) from Master.`);
+    }
+  };
+
   const handleItemChange = (index: number, field: string, value: any) => {
     const newItems = [...formData.selectedItems];
     let update: any = { [field]: value };
     
     const mergedItem = { ...newItems[index], ...update };
-       const actualSheets =
-    Number(
-      field === 'quantityUsed'
-        ? value
-        : mergedItem.quantityUsed
-    ) || 0;
-
-  mergedItem.allocatedPaper = actualSheets;
-
     
     // Auto-detect matching paper stock actual usage if this is a joint job and stock selection changes
     if ((formData as any).isJoint && (formData as any).jointRef && field === 'stockId' && value) {
@@ -637,47 +1029,43 @@ export function JobManagement() {
         const matchingItem = matchingJob.items?.find((it: any) => it.stockId === value);
         if (matchingItem) {
           mergedItem.quantityUsed = matchingItem.quantityUsed;
+          mergedItem.wastageSheets = matchingItem.wastageSheets || 0;
           const stockName = stocks.find(s => s.id === value)?.name || 'paper';
-          toast.success(`Auto-detected ${matchingItem.quantityUsed} physical sheets of ${stockName} from Job #${cleanRef}`);
+          toast.success(`Auto-detected ${matchingItem.quantityUsed} physical sheets and ${matchingItem.wastageSheets || 0} wastage from Job #${cleanRef}`);
         }
       }
     }
-   // Calculate Allocated Paper for Joint Jobs
-if ((formData as any).isJoint) {
 
-  const jointItems = [...newItems];
+    // Auto populate defaultRate from selected stockId
+    if (field === 'stockId' && value) {
+      const selectedStock = stocks.find(s => s.id === value);
+      if (selectedStock) {
+        mergedItem.paperRate = selectedStock.defaultRate || 0;
+      }
+    }
 
-  const totalWeight = jointItems.reduce((sum, item) => {
-    return sum + (
-      (Number(item.quantityUsed) || 0) *
-      (Number(item.ups) || 1)
-    );
-  }, 0);
-
-  jointItems.forEach(item => {
-
-    const theoretical =
-      (Number(item.quantityUsed) || 0) *
-      (Number(item.ups) || 1);
-
-    item.allocatedPaper =
-      totalWeight > 0
-        ? Math.round(
-            (theoretical / totalWeight) *
-            (Number(item.quantityUsed) || 0)
-          )
-        : 0;
-  });
-
-} 
     newItems[index] = mergedItem;
-    setFormData({ ...formData, selectedItems: newItems });
+
+    const isJointJob = !!(formData as any).isJoint;
+    let autoProdQty = formData.orderedQuantity;
+    if (isJointJob) {
+      autoProdQty = newItems.reduce((acc: number, item: any) => {
+        return acc + (Number(item.quantityUsed || 0) * (Number(item.ups) || 1));
+      }, 0);
+    }
+
+    const tempForm = { ...formData, selectedItems: newItems, orderedQuantity: autoProdQty };
+    const finalItems = recalculateAllocatedPapersForForm(tempForm, jobs);
+    setFormData({ ...tempForm, selectedItems: finalItems });
   };
 
   const handleAddPlate = () => {
     setFormData({
       ...formData,
-      platesUsed: [...formData.platesUsed, { plateId: '', count: 0, isJoint: false, plateRef: '', rate: 0 }]
+      platesUsed: [
+        ...formData.platesUsed,
+        { plateId: '', count: 0, isJoint: false, plateRef: '', rate: 0, isAdditionalPlate: formData.isJoint ? true : false }
+      ]
     });
   };
 
@@ -787,33 +1175,117 @@ if ((formData as any).isJoint) {
 
   const handleAddJob = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (formData.selectedItems.length === 0 && formData.platesUsed.length === 0 && !formData.processCharges.some(pc => pc.amount > 0)) {
+    
+    // Filter out completely untouched/empty default entries
+    const cleanSelectedItems = formData.selectedItems.filter(item => !(item.stockId === '' && (item.quantityUsed === 0 || !item.quantityUsed)));
+    const cleanPlatesUsed = formData.platesUsed.filter(p => !(p.plateId === '' && (p.count === 0 || !p.count)));
+
+    if (cleanSelectedItems.length === 0 && cleanPlatesUsed.length === 0 && !formData.processCharges.some(pc => pc.amount > 0)) {
       toast.error('Please add at least one material stock, plate, or process charge to the job');
       return;
     }
 
-    if (formData.isJoint && formData.selectedItems.length === 0) {
-      toast.error('For joint jobs, specifying the paper required is compulsory');
-      return;
+    if (formData.isJoint) {
+      if (cleanSelectedItems.length === 0) {
+        toast.error('For joint jobs, specifying the paper required is compulsory');
+        return;
+      }
+      for (const item of cleanSelectedItems) {
+        if (!item.stockId) {
+          toast.error('Please select a paper stock for all items');
+          return;
+        }
+        if (!item.ups || item.ups <= 0) {
+          toast.error('Matter Ups is required and must be greater than 0.');
+          return;
+        }
+        if (item.quantityUsed === undefined || item.quantityUsed === null || item.quantityUsed <= 0) {
+          // Allow reading or entering actual sheets used
+          toast.error('Actual Sheets Used is required and must be greater than 0.');
+          return;
+        }
+      }
+      if (formData.jointJobType === 'linked' && !formData.jointRef) {
+        toast.error('Please select a Joint Reference (Master Joint Job) first.');
+        return;
+      }
+    } else {
+      for (const item of cleanSelectedItems) {
+        if (!item.stockId) {
+          toast.error('Please select a paper stock for all items');
+          return;
+        }
+      }
     }
 
-    for (const item of formData.selectedItems) {
-      if (!item.stockId) {
-        toast.error('Please select a paper stock for all items');
+    for (const plate of cleanPlatesUsed) {
+      if (!plate.plateId && !plate.isJoint) {
+        toast.error('Please select a plate model/size');
         return;
       }
     }
 
+    const generateNextSharedRunId = (existingJobs: Job[]): string => {
+      let maxNum = 0;
+      existingJobs.forEach(job => {
+        if (job.sharedRunId && job.sharedRunId.startsWith('JR')) {
+          const numPart = job.sharedRunId.slice(2);
+          const parsed = parseInt(numPart, 10);
+          if (!isNaN(parsed) && parsed > maxNum) {
+            maxNum = parsed;
+          }
+        }
+      });
+      const nextNum = maxNum + 1;
+      return `JR${nextNum.toString().padStart(3, '0')}`;
+    };
+
     try {
       await runTransaction(db, async (transaction) => {
-        // 1. Check if all stocks have enough quantity (exclude joint plates and joint papers from stock check)
+        const isJobLinked = !!formData.isJoint && formData.jointJobType === 'linked';
+
+        // 1. Generate sharedRunId sequentially for master joint job
+        let finalSharedRunId = '';
+        if (formData.isJoint) {
+          if (formData.jointJobType === 'master') {
+            finalSharedRunId = formData.sharedRunId || generateNextSharedRunId(jobs);
+          } else if (formData.jointJobType === 'linked') {
+            finalSharedRunId = formData.sharedRunId;
+          }
+        }
+
+        // Allocate a new ID for the job in advance
+        const jobsRef = collection(db, 'jobs');
+        const newJobDoc = doc(jobsRef);
+        const newJobId = newJobDoc.id;
+
+        // Paper stock deduction (only Master deducts; Linked jobs bypass)
+        const paperItemsToDeduct = isJobLinked 
+          ? [] 
+          : cleanSelectedItems.map(i => ({ 
+              id: i.stockId, 
+              used: Number(i.quantityUsed) + (Number(i.wastageSheets) || 0) 
+            }));
+
+        // Plates deduction:
+        // - Additional plates ALWAYS deduct normally
+        // - Shared plates ONLY deduct once, when saving the master/run
+        const plateItemsToDeduct = cleanPlatesUsed
+          .filter(p => (!p.isJoint || formData.jointJobType === 'master') && !p.isReused)
+          .map(p => ({ 
+            id: p.plateId, 
+            used: Number(p.count) 
+          }));
+
         const allItems = [
-          ...formData.selectedItems.filter(i => !i.isJoint).map(i => ({ id: i.stockId, used: i.quantityUsed })),
-          ...formData.platesUsed.filter(p => !p.isJoint && !p.isReused).map(p => ({ id: p.plateId, used: p.count }))
-        ].filter(i => i.id);
+          ...paperItemsToDeduct,
+          ...plateItemsToDeduct
+        ].filter(item => item.id);
 
         const stockRefs = allItems.map(item => doc(db, 'stocks', item.id));
-        const stockSnaps = await Promise.all(stockRefs.map(ref => transaction.get(ref)));
+        const stockSnaps = stockRefs.length > 0
+          ? await Promise.all(stockRefs.map(ref => transaction.get(ref)))
+          : [];
 
         for (let i = 0; i < stockSnaps.length; i++) {
           const snap = stockSnaps[i];
@@ -833,7 +1305,7 @@ if ((formData as any).isJoint) {
           jobDateTimestamp = parsedDate.getTime();
         }
 
-        // 2. Deduct stock and record history (excluding joint plates and shared print runs)
+        // 2. Deduct stock and record history
         stockSnaps.forEach((snap, i) => {
           const item = allItems[i];
           const stockData = snap.data() as StockItem;
@@ -852,32 +1324,83 @@ if ((formData as any).isJoint) {
             quantity: -item.used,
             previousQuantity: stockData.quantity,
             newQuantity: newQuantity,
-            notes: `Job created (individual stock deducted): ${formData.clientName} - ${formData.jobDescription}`
+            notes: `Job created (stock deducted): ${formData.clientName} - ${formData.jobDescription}`
           });
         });
 
-        // 3. Create job (including joint status, custom rates & process charges breakdown)
-        const jobData = {
+        // 3. Setup JointRun Document in Firestore
+        if (formData.isJoint && finalSharedRunId) {
+          const jointRunRef = doc(db, 'jointRuns', finalSharedRunId);
+          const jointRunSnap = await transaction.get(jointRunRef);
+
+          if (formData.jointJobType === 'master') {
+            const paperStockId = cleanSelectedItems[0]?.stockId || '';
+            const paperItemFromStock = stocks.find(s => s.id === paperStockId);
+            const jointRunData: JointRun = {
+              id: finalSharedRunId,
+              sharedRunId: finalSharedRunId,
+              paper: {
+                stockId: paperStockId,
+                paperSize: (formData as any).paperSize || paperItemFromStock?.size || '',
+                paperSection: (formData as any).paperSection || paperItemFromStock?.paperType || '',
+                paperNotes: (formData as any).paperNotes || '',
+                productionNotes: (formData as any).productionNotes || '',
+                paperRate: cleanSelectedItems[0]?.paperRate || 0
+              },
+              totalSheetsUsed: Number(cleanSelectedItems[0]?.quantityUsed) || 0,
+              wastageSheets: Number(cleanSelectedItems[0]?.wastageSheets) || 0,
+              sharedPlates: cleanPlatesUsed.filter(p => p.isJoint).map(p => ({
+                plateId: p.plateId,
+                count: Number(p.count),
+                rate: Number(p.rate) || 0,
+                isJoint: true,
+                plateRef: finalSharedRunId
+              })),
+              linkedJobs: [newJobId]
+            };
+            transaction.set(jointRunRef, cleanUndefined(jointRunData));
+          } else if (formData.jointJobType === 'linked') {
+            if (jointRunSnap.exists()) {
+              const jrData = jointRunSnap.data() as JointRun;
+              const updatedLinkedJobs = Array.from(new Set([...(jrData.linkedJobs || []), newJobId]));
+              transaction.update(jointRunRef, { linkedJobs: updatedLinkedJobs });
+            }
+          }
+        }
+
+        // 4. Create Job document in Firestore
+        // Save only job-specific items/additional plates to avoid duplicating shared data in the database
+        const jobDataToSave = {
           clientName: formData.clientName,
           jobDescription: formData.jobDescription,
           date: jobDateTimestamp,
-          items: formData.selectedItems,
-          platesUsed: formData.platesUsed,
+          items: formData.isJoint
+            ? cleanSelectedItems.map(item => ({ ups: item.ups, isJoint: true, paperRate: item.paperRate }))
+            : cleanSelectedItems,
+          platesUsed: formData.isJoint
+            ? cleanPlatesUsed.filter(p => !p.isJoint)
+            : cleanPlatesUsed,
           processCharges: formData.processCharges.filter(pc => pc.amount > 0 || (pc.notes && pc.notes.trim() !== '')),
           lamination: formData.lamination,
           orderedQuantity: formData.orderedQuantity ? Number(formData.orderedQuantity) : 0,
           dispatches: [],
           dispatchStatus: 'pending' as const,
-          isJoint: !!(formData as any).isJoint,
-          jointRef: (formData as any).jointRef || ''
+          isJoint: !!formData.isJoint,
+          jointJobType: formData.isJoint ? (formData.jointJobType || 'master') : undefined,
+          sharedRunId: finalSharedRunId || undefined,
+          jointRef: formData.isJoint ? (formData.jointRef || '') : '',
+          isRepeat: !!formData.isRepeat,
+          repeatRef: formData.isRepeat ? (formData.repeatRef || '') : '',
+          paperBillingMethod: formData.paperBillingMethod || '',
+          paperBillingRate: Number(formData.paperBillingRate) || 0,
+          paperBillingAmount: Number(formData.paperBillingAmount) || 0
         };
-        const jobsRef = collection(db, 'jobs');
-        const newJobDoc = doc(jobsRef);
-        transaction.set(newJobDoc, cleanUndefined(jobData));
+
+        transaction.set(newJobDoc, cleanUndefined(jobDataToSave));
       });
 
       setIsAddOpen(false);
-      setFormData({ clientName: '', jobDescription: '', selectedItems: [], platesUsed: [], processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '', isRepeat: false, repeatRef: '', date: new Date().toISOString().split('T')[0] } as any);
+      setFormData({ clientName: '', jobDescription: '', selectedItems: getInitialSelectedItems(), platesUsed: getInitialPlatesUsed(), processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointJobType: '', sharedRunId: '', jointParentId: '', jointRef: '', isRepeat: false, repeatRef: '', date: new Date().toISOString().split('T')[0], paperBillingMethod: '', paperBillingRate: 0, paperBillingAmount: 0 } as any);
       toast.success('Job created and stock updated successfully');
     } catch (error: any) {
       toast.error(error.message || 'Failed to create job');
@@ -887,22 +1410,70 @@ if ((formData as any).isJoint) {
 
   const handleDeleteJob = async () => {
     if (!jobToDelete) return;
+
+    if (jobToDelete.isJoint && jobToDelete.jointJobType === 'master') {
+      const siblings = jobs.filter(j => j.sharedRunId === jobToDelete.sharedRunId && j.id !== jobToDelete.id);
+      if (siblings.length > 0) {
+        toast.error('Cannot delete Master Joint Job while other companion Linked Jobs are active. Please delete linked jobs first.');
+        return;
+      }
+    }
     
     try {
       await runTransaction(db, async (transaction) => {
-        // 1. Return stock (only return plates and paper that were actually deducted - excluding joint plates and joint papers!)
+        const isLinkedJob = !!jobToDelete.isJoint && jobToDelete.jointJobType === 'linked';
+        
+        let paperItemsToReturn = isLinkedJob 
+          ? [] 
+          : jobToDelete.items.map(i => ({ 
+              id: i.stockId, 
+              used: Number(i.quantityUsed) + (Number(i.wastageSheets) || 0) 
+            }));
+
+        const plateItemsToReturn = (jobToDelete.platesUsed || [])
+          .filter(p => !p.isJoint && !p.isReused)
+          .map(p => ({ id: p.plateId, used: p.count }));
+
+        let runToDeleteRef = null;
+
+        if (jobToDelete.isJoint && jobToDelete.sharedRunId) {
+          const runId = jobToDelete.sharedRunId;
+          const runRef = doc(db, 'jointRuns', runId);
+          const runSnap = await transaction.get(runRef);
+          
+          if (runSnap.exists()) {
+            const runData = runSnap.data() as JointRun;
+            const updatedLinked = (runData.linkedJobs || []).filter(id => id !== jobToDelete.id);
+            
+            if (isLinkedJob && updatedLinked.length > 0) {
+              transaction.update(runRef, { linkedJobs: updatedLinked });
+            } else {
+              runToDeleteRef = runRef;
+              // Return run-level paper resources if we are deleting the last job in this run
+              if (runData.paper?.stockId) {
+                const qty = Number(runData.totalSheetsUsed || 0) + Number(runData.wastageSheets || 0);
+                if (qty > 0) {
+                  paperItemsToReturn.push({ id: runData.paper.stockId, used: qty });
+                }
+              }
+              // Return run-level plates as well
+              (runData.sharedPlates || []).forEach(p => {
+                paperItemsToReturn.push({ id: p.plateId, used: Number(p.count || 0) });
+              });
+            }
+          }
+        }
+
         const allItems = [
-          ...jobToDelete.items.filter(i => !i.isJoint).map(i => ({ id: i.stockId, used: i.quantityUsed })),
-          ...(jobToDelete.platesUsed || []).filter(p => !p.isJoint && !p.isReused).map(p => ({ id: p.plateId, used: p.count }))
+          ...paperItemsToReturn,
+          ...plateItemsToReturn
         ].filter(item => item.id);
 
-        // Fetch all stock snapshots in parallel before any writes
         const stockRefs = allItems.map(item => doc(db, 'stocks', item.id));
         const stockSnaps = stockRefs.length > 0 
           ? await Promise.all(stockRefs.map(ref => transaction.get(ref)))
           : [];
         
-        // 2. We now have all snaps retrieved before any updates. Perform updates and create history.
         stockSnaps.forEach((snap, idx) => {
           const item = allItems[idx];
           if (snap.exists()) {
@@ -921,16 +1492,19 @@ if ((formData as any).isJoint) {
               quantity: item.used,
               previousQuantity: stockData.quantity,
               newQuantity: newQuantity,
-              notes: `Job deleted: ${jobToDelete.clientName} - ${jobToDelete.jobDescription}`
+              notes: `Job deleted and stock returned: ${jobToDelete.clientName} - ${jobToDelete.jobDescription}`
             });
           }
         });
         
-        // 3. Delete job
+        if (runToDeleteRef) {
+          transaction.delete(runToDeleteRef);
+        }
+
         transaction.delete(doc(db, 'jobs', jobToDelete.id));
       });
       setJobToDelete(null);
-      toast.success('Job deleted and stock returned successfully');
+      toast.success('Job deleted and associated stock returned successfully');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `jobs/${jobToDelete.id}`);
     }
@@ -1191,76 +1765,280 @@ if ((formData as any).isJoint) {
   const handleUpdateJob = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingJob) return;
-    if (formData.selectedItems.length === 0 && formData.platesUsed.length === 0 && !formData.processCharges.some(pc => pc.amount > 0)) {
+
+    // Filter out completely untouched/empty default entries
+    const cleanSelectedItems = formData.selectedItems.filter(item => !(item.stockId === '' && (item.quantityUsed === 0 || !item.quantityUsed)));
+    const cleanPlatesUsed = formData.platesUsed.filter(p => !(p.plateId === '' && (p.count === 0 || !p.count)));
+
+    if (cleanSelectedItems.length === 0 && cleanPlatesUsed.length === 0 && !formData.processCharges.some(pc => pc.amount > 0)) {
       toast.error('Please add at least one material stock, plate, or process charge to the job');
       return;
     }
 
-    if (formData.isJoint && formData.selectedItems.length === 0) {
-      toast.error('For joint jobs, specifying the paper required is compulsory');
-      return;
+    if (formData.isJoint) {
+      if (cleanSelectedItems.length === 0) {
+        toast.error('For joint jobs, specifying the paper required is compulsory');
+        return;
+      }
+      for (const item of cleanSelectedItems) {
+        if (!item.stockId) {
+          toast.error('Please select a paper stock for all items');
+          return;
+        }
+        if (!item.ups || item.ups <= 0) {
+          toast.error('Matter Ups is required and must be greater than 0.');
+          return;
+        }
+        if (item.quantityUsed === undefined || item.quantityUsed === null || item.quantityUsed <= 0) {
+          toast.error('Actual Sheets Used is required and must be greater than 0.');
+          return;
+        }
+      }
+      if (formData.jointJobType === 'linked' && !formData.jointRef) {
+        toast.error('Please select a Joint Reference (Master Joint Job) first.');
+        return;
+      }
+    } else {
+      for (const item of cleanSelectedItems) {
+        if (!item.stockId) {
+          toast.error('Please select a paper stock for all items');
+          return;
+        }
+      }
     }
 
-    for (const item of formData.selectedItems) {
-      if (!item.stockId) {
-        toast.error('Please select a paper stock for all items');
+    for (const plate of cleanPlatesUsed) {
+      if (!plate.plateId && !plate.isJoint) {
+        toast.error('Please select a plate model/size');
         return;
       }
     }
 
-    try {
-      await runTransaction(db, async (transaction) => {
-        const oldItems = [
-          ...editingJob.items.filter(i => !i.isJoint).map(i => ({ id: i.stockId, used: i.quantityUsed })),
-          ...(editingJob.platesUsed || []).filter(p => !p.isJoint && !p.isReused).map(p => ({ id: p.plateId, used: p.count }))
-        ];
-        const newItems = [
-          ...formData.selectedItems.filter(i => !i.isJoint).map(i => ({ id: i.stockId, used: i.quantityUsed })),
-          ...formData.platesUsed.filter(p => !p.isJoint && !p.isReused).map(p => ({ id: p.plateId, used: p.count }))
-        ];
-
-        const allStockIds = Array.from(new Set([
-          ...oldItems.map(i => i.id),
-          ...newItems.map(i => i.id)
-        ])).filter(id => id);
-        
-        const stockSnaps = await Promise.all(allStockIds.map(id => transaction.get(doc(db, 'stocks', id))));
-        const stockDataMap = new Map(stockSnaps.map(s => [s.id, s.data() as StockItem]));
-
-        // Validate and calculate new quantities
-        for (const id of allStockIds) {
-          const stock = stockDataMap.get(id);
-          if (!stock) continue;
-          
-          const oldUsage = oldItems.filter(i => i.id === id).reduce((sum, i) => sum + i.used, 0);
-          const newUsage = newItems.filter(i => i.id === id).reduce((sum, i) => sum + i.used, 0);
-          
-          const netChange = oldUsage - newUsage;
-          const finalQuantity = stock.quantity + netChange;
-          
-          if (finalQuantity < 0 && !formData.ignoreStockLimits) {
-            throw new Error(`Insufficient stock for ${stock.name}. Available: ${stock.quantity + oldUsage}`);
+    const generateNextSharedRunId = (existingJobs: Job[]): string => {
+      let maxNum = 0;
+      existingJobs.forEach(job => {
+        if (job.sharedRunId && job.sharedRunId.startsWith('JR')) {
+          const numPart = job.sharedRunId.slice(2);
+          const parsed = parseInt(numPart, 10);
+          if (!isNaN(parsed) && parsed > maxNum) {
+            maxNum = parsed;
           }
-          
-          transaction.update(doc(db, 'stocks', id), {
+        }
+      });
+      const nextNum = maxNum + 1;
+      return `JR${nextNum.toString().padStart(3, '0')}`;
+    };
+
+    try {
+      const siblingJobsQuery = query(collection(db, 'jobs'), where('sharedRunId', '==', formData.sharedRunId || ''));
+      const siblingJobsSnap = (formData.isJoint && formData.jointJobType === 'master' && formData.sharedRunId) 
+        ? await getDocs(siblingJobsQuery) 
+        : null;
+      
+      const siblingJobs = siblingJobsSnap 
+        ? siblingJobsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job)).filter(j => j.id !== editingJob.id)
+        : [];
+
+      await runTransaction(db, async (transaction) => {
+        let finalSharedRunId = '';
+        if (formData.isJoint) {
+          if (formData.jointJobType === 'master') {
+            finalSharedRunId = formData.sharedRunId || generateNextSharedRunId(jobs);
+          } else if (formData.jointJobType === 'linked') {
+            finalSharedRunId = formData.sharedRunId;
+          }
+        }
+
+        const jrRef = finalSharedRunId ? doc(db, 'jointRuns', finalSharedRunId) : null;
+        const jrSnap = jrRef ? await transaction.get(jrRef) : null;
+        const oldJrData = jrSnap && jrSnap.exists() ? jrSnap.data() as JointRun : null;
+
+        const isOldJobMaster = !!editingJob.isJoint && editingJob.jointJobType === 'master';
+        const isOldJobLinked = !!editingJob.isJoint && editingJob.jointJobType === 'linked';
+        const isNewJobMaster = !!formData.isJoint && formData.jointJobType === 'master';
+        const isNewJobLinked = !!formData.isJoint && formData.jointJobType === 'linked';
+
+        const stockChanges = new Map<string, number>();
+
+        // 1. Add back old paper if the old state did NOT bypass paper deduction (i.e. not old linked)
+        if (!isOldJobLinked) {
+          editingJob.items.forEach(it => {
+            if (it.stockId) {
+              const qty = Number(it.quantityUsed || 0) + (Number(it.wastageSheets || 0));
+              stockChanges.set(it.stockId, (stockChanges.get(it.stockId) || 0) + qty);
+            }
+          });
+        }
+
+        // 2. Deduct new paper if the new state does NOT bypass paper deduction (i.e. not new linked)
+        if (!isNewJobLinked) {
+          cleanSelectedItems.forEach(it => {
+            if (it.stockId) {
+              const qty = Number(it.quantityUsed || 0) + (Number(it.wastageSheets || 0));
+              stockChanges.set(it.stockId, (stockChanges.get(it.stockId) || 0) - qty);
+            }
+          });
+        }
+
+        // 3. Add back old individual plates of the job
+        const oldIndividualPlates = (editingJob.platesUsed || []).filter(p => !p.isJoint && !p.isReused);
+        oldIndividualPlates.forEach(p => {
+          stockChanges.set(p.plateId, (stockChanges.get(p.plateId) || 0) + Number(p.count || 0));
+        });
+
+        // 4. Deduct new individual plates of the job
+        const newIndividualPlates = cleanPlatesUsed.filter(p => !p.isJoint && !p.isReused);
+        newIndividualPlates.forEach(p => {
+          stockChanges.set(p.plateId, (stockChanges.get(p.plateId) || 0) - Number(p.count || 0));
+        });
+
+        // 5. Add back old shared plates at the RUN level if we were the master
+        if (isOldJobMaster && oldJrData) {
+          (oldJrData.sharedPlates || []).forEach(p => {
+            stockChanges.set(p.plateId, (stockChanges.get(p.plateId) || 0) + Number(p.count || 0));
+          });
+        }
+
+        // 6. Deduct new shared plates at the RUN level if we are now the master
+        if (isNewJobMaster) {
+          cleanPlatesUsed.filter(p => p.isJoint && !p.isReused).forEach(p => {
+            stockChanges.set(p.plateId, (stockChanges.get(p.plateId) || 0) - Number(p.count || 0));
+          });
+        }
+
+        // Validate stock changes and write to database transactionally
+        const uniqueChangedIds = Array.from(stockChanges.keys()).filter(id => id && stockChanges.get(id) !== 0);
+        const stockRefs = uniqueChangedIds.map(id => doc(db, 'stocks', id));
+        const stockSnaps = stockRefs.length > 0 ? await Promise.all(stockRefs.map(ref => transaction.get(ref))) : [];
+
+        for (let i = 0; i < stockSnaps.length; i++) {
+          const snap = stockSnaps[i];
+          const stockId = uniqueChangedIds[i];
+          const change = stockChanges.get(stockId) || 0;
+          if (!snap.exists()) continue;
+          const stockData = snap.data() as StockItem;
+          const finalQuantity = stockData.quantity + change;
+
+          if (finalQuantity < 0 && !formData.ignoreStockLimits) {
+            throw new Error(`Insufficient stock for ${stockData.name}. Available: ${stockData.quantity + (change < 0 ? -change : 0)}`);
+          }
+
+          transaction.update(snap.ref, {
             quantity: finalQuantity,
             lastUpdated: Date.now()
           });
 
-          if (netChange !== 0) {
+          if (change !== 0) {
             const historyRef = doc(collection(db, 'stockHistory'));
             transaction.set(historyRef, {
-              stockId: id,
-              date: formData.date ? new Date(formData.date).getTime() : Date.now(),
-              type: netChange > 0 ? 'addition' : 'usage',
-              quantity: netChange,
-              previousQuantity: stock.quantity,
+              stockId: stockId,
+              date: Date.now(),
+              type: change > 0 ? 'addition' : 'usage',
+              quantity: change,
+              previousQuantity: stockData.quantity,
               newQuantity: finalQuantity,
               notes: `Job updated: ${formData.clientName} - ${formData.jobDescription}`
             });
           }
         }
 
+        // 7. Sync or setup JointRun document in Firestore
+        if (formData.isJoint && finalSharedRunId && jrRef) {
+          const currentLinkedJobs = oldJrData ? (oldJrData.linkedJobs || []) : [editingJob.id];
+          const paperStockId = cleanSelectedItems[0]?.stockId || (oldJrData?.paper?.stockId || '');
+          const paperItemFromStock = stocks.find(s => s.id === paperStockId);
+
+          const updatedJrData: JointRun = {
+            id: finalSharedRunId,
+            sharedRunId: finalSharedRunId,
+            paper: {
+              stockId: paperStockId,
+              paperSize: (formData as any).paperSize || paperItemFromStock?.size || oldJrData?.paper?.paperSize || '',
+              paperSection: (formData as any).paperSection || paperItemFromStock?.paperType || oldJrData?.paper?.paperSection || '',
+              paperNotes: (formData as any).paperNotes || oldJrData?.paper?.paperNotes || '',
+              productionNotes: (formData as any).productionNotes || oldJrData?.paper?.productionNotes || '',
+              paperRate: cleanSelectedItems[0]?.paperRate || oldJrData?.paper?.paperRate || 0
+            },
+            totalSheetsUsed: Number(cleanSelectedItems[0]?.quantityUsed) || oldJrData?.totalSheetsUsed || 0,
+            wastageSheets: Number(cleanSelectedItems[0]?.wastageSheets) || oldJrData?.wastageSheets || 0,
+            sharedPlates: cleanPlatesUsed.filter(p => p.isJoint).map(p => ({
+              plateId: p.plateId,
+              count: Number(p.count),
+              rate: Number(p.rate) || 0,
+              isJoint: true,
+              plateRef: finalSharedRunId
+            })),
+            linkedJobs: Array.from(new Set([...currentLinkedJobs, editingJob.id]))
+          };
+
+          // Compare changes and report audit logs in Firestore
+          if (oldJrData && finalSharedRunId) {
+            const checkAndLogChange = (fieldName: string, oldVal: any, newVal: any) => {
+              if (oldVal !== newVal) {
+                const auditLogRef = doc(collection(db, 'jointRunAuditLogs'));
+                transaction.set(auditLogRef, {
+                  sharedRunId: finalSharedRunId,
+                  userEmail: auth.currentUser?.email || 'system',
+                  changedField: fieldName,
+                  oldValue: String(oldVal),
+                  newValue: String(newVal),
+                  affectedJobs: currentLinkedJobs,
+                  timestamp: Date.now()
+                });
+              }
+            };
+
+            checkAndLogChange('Paper Stock', oldJrData.paper?.stockId, updatedJrData.paper?.stockId);
+            checkAndLogChange('Paper Size', oldJrData.paper?.paperSize, updatedJrData.paper?.paperSize);
+            checkAndLogChange('Paper Section', oldJrData.paper?.paperSection, updatedJrData.paper?.paperSection);
+            checkAndLogChange('Shared Paper Notes', oldJrData.paper?.paperNotes, updatedJrData.paper?.paperNotes);
+            checkAndLogChange('Shared Production Notes', oldJrData.paper?.productionNotes, updatedJrData.paper?.productionNotes);
+            checkAndLogChange('Paper Rate', oldJrData.paper?.paperRate, updatedJrData.paper?.paperRate);
+            checkAndLogChange('Total Sheets Used', oldJrData.totalSheetsUsed, updatedJrData.totalSheetsUsed);
+            checkAndLogChange('Wastage Sheets', oldJrData.wastageSheets, updatedJrData.wastageSheets);
+
+            const oldPlatesStr = (oldJrData.sharedPlates || []).map(p => `${p.plateId}:${p.count}`).join(', ');
+            const newPlatesStr = (updatedJrData.sharedPlates || []).map(p => `${p.plateId}:${p.count}`).join(', ');
+            checkAndLogChange('Shared Plates', oldPlatesStr, newPlatesStr);
+          }
+
+          transaction.set(jrRef, cleanUndefined(updatedJrData));
+
+          // Cascading updates to linked sibling jobs in the same group to maintain alignment write-back
+          siblingJobs.forEach(sib => {
+            const sibItems = (sib.items || []).map((sibItem: any) => {
+              return {
+                ...sibItem,
+                stockId: paperStockId,
+                paperRate: Number(updatedJrData.paper?.paperRate) || 0,
+                quantityUsed: Number(updatedJrData.totalSheetsUsed) || 0,
+                wastageSheets: Number(updatedJrData.wastageSheets) || 0,
+                isJoint: true,
+                paperRef: finalSharedRunId
+              };
+            });
+
+            const sibNonJointPlates = (sib.platesUsed || []).filter((p: any) => !p.isJoint);
+            const sibSharedPlates = (updatedJrData.sharedPlates || []).map((p: any) => ({
+              ...p,
+              isJoint: true,
+              plateRef: finalSharedRunId
+            }));
+            const sibPlates = [...sibSharedPlates, ...sibNonJointPlates];
+
+            const sibOrderedQty = sibItems.reduce((acc: number, item: any) => {
+              return acc + (Number(item.quantityUsed || 0) * (Number(item.ups) || 1));
+            }, 0);
+
+            transaction.update(doc(db, 'jobs', sib.id), cleanUndefined({
+              items: sibItems.map(item => ({ ups: item.ups, isJoint: true, paperRate: item.paperRate })),
+              platesUsed: sibNonJointPlates,
+              orderedQuantity: sibOrderedQty
+            }) as any);
+          });
+        }
+
+        // 8. Update job record itself
         const updatedDispatches = editingJob.dispatches || [];
         const orderedQty = formData.orderedQuantity ? Number(formData.orderedQuantity) : 0;
         let status: 'pending' | 'partial' | 'completed' = 'pending';
@@ -1275,25 +2053,36 @@ if ((formData as any).isJoint) {
           status = updatedDispatches.length > 0 ? 'partial' : 'pending';
         }
 
-        const updateFields = {
+        const jobDataToSave = {
           clientName: formData.clientName,
           jobDescription: formData.jobDescription,
-          items: formData.selectedItems,
-          platesUsed: formData.platesUsed,
+          items: formData.isJoint
+            ? cleanSelectedItems.map(item => ({ ups: item.ups, isJoint: true, paperRate: item.paperRate }))
+            : cleanSelectedItems,
+          platesUsed: formData.isJoint
+            ? cleanPlatesUsed.filter(p => !p.isJoint)
+            : cleanPlatesUsed,
           processCharges: formData.processCharges.filter(pc => pc.amount > 0 || (pc.notes && pc.notes.trim() !== '')),
           lamination: formData.lamination,
           orderedQuantity: orderedQty,
           dispatchStatus: status,
-          isJoint: !!(formData as any).isJoint,
-          jointRef: (formData as any).jointRef || '',
-          date: formData.date ? new Date(formData.date).getTime() : Date.now()
+          isJoint: !!formData.isJoint,
+          jointJobType: formData.isJoint ? (formData.jointJobType || 'master') : undefined,
+          sharedRunId: finalSharedRunId || undefined,
+          jointRef: formData.isJoint ? (formData.jointRef || '') : '',
+          isRepeat: !!formData.isRepeat,
+          repeatRef: formData.isRepeat ? (formData.repeatRef || '') : '',
+          date: formData.date ? new Date(formData.date).getTime() : Date.now(),
+          paperBillingMethod: formData.paperBillingMethod || '',
+          paperBillingRate: Number(formData.paperBillingRate) || 0,
+          paperBillingAmount: Number(formData.paperBillingAmount) || 0
         };
 
-        transaction.update(doc(db, 'jobs', editingJob.id), cleanUndefined(updateFields) as any);
+        transaction.update(doc(db, 'jobs', editingJob.id), cleanUndefined(jobDataToSave) as any);
       });
 
       setEditingJob(null);
-      setFormData({ clientName: '', jobDescription: '', selectedItems: [], platesUsed: [], processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '', isRepeat: false, repeatRef: '', date: new Date().toISOString().split('T')[0] } as any);
+      setFormData({ clientName: '', jobDescription: '', selectedItems: getInitialSelectedItems(), platesUsed: getInitialPlatesUsed(), processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointJobType: '', sharedRunId: '', jointParentId: '', jointRef: '', isRepeat: false, repeatRef: '', date: new Date().toISOString().split('T')[0], paperBillingMethod: '', paperBillingRate: 0, paperBillingAmount: 0 } as any);
       toast.success('Job updated successfully');
     } catch (error: any) {
       toast.error(error.message || 'Failed to update job');
@@ -1313,6 +2102,14 @@ if ((formData as any).isJoint) {
           <p className="text-sm md:text-base text-gray-500 font-serif italic">Track and manage client orders</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+          <Button
+            variant="outline"
+            className="border-amber-200 text-amber-700 hover:bg-amber-50 rounded-full h-12 md:h-10 px-4 flex items-center justify-center gap-2 w-full sm:w-auto shrink-0 font-medium"
+            onClick={() => setIsAuditLogsOpen(true)}
+          >
+            <FileText size={16} />
+            <span>Joint Run Audit Logs</span>
+          </Button>
           {jobs.length > 0 && (
             <Button
               variant="outline"
@@ -1329,8 +2126,8 @@ if ((formData as any).isJoint) {
             setFormData({
               clientName: '',
               jobDescription: '',
-              selectedItems: [],
-              platesUsed: [],
+              selectedItems: getInitialSelectedItems(),
+              platesUsed: getInitialPlatesUsed(),
               processCharges: getInitialProcessCharges(),
               lamination: getInitialLamination(),
               ignoreStockLimits: false,
@@ -1338,15 +2135,18 @@ if ((formData as any).isJoint) {
               isJoint: false,
               jointRef: '',
               isRepeat: false,
-              repeatRef: ''
+              repeatRef: '',
+              paperBillingMethod: '',
+              paperBillingRate: 0,
+              paperBillingAmount: 0
             } as any);
           }
         }}>
-          <DialogTrigger asChild>
+          <DialogTrigger render={
             <Button className="bg-[#5A5A40] hover:bg-[#4A4A30] rounded-full px-6 w-full sm:w-auto h-12 md:h-10">
               <Plus className="mr-2 h-4 w-4" /> Create New Job
             </Button>
-          </DialogTrigger>
+          } />
           <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Create New Job</DialogTitle>
@@ -1385,16 +2185,23 @@ if ((formData as any).isJoint) {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="orderedQuantity" className="flex items-center gap-1">
-                    <span>Ordered Finished Product Quantity</span>
+                  <Label htmlFor="orderedQuantity" className="flex items-center gap-1 text-sm font-semibold text-gray-700">
+                    <span>{formData.isJoint ? "Produced Finished Product Quantity (Read-only for Joint Jobs)" : "Ordered Finished Product Quantity"}</span>
                   </Label>
                   <Input 
                     id="orderedQuantity" 
                     type="number" 
-                    placeholder="e.g. 10000" 
+                    placeholder={formData.isJoint ? "Total Sheets Used × Matter Ups" : "e.g. 10000"} 
                     value={formData.orderedQuantity} 
                     onChange={e => handleOrderedQuantityChange(e.target.value)} 
+                    readOnly={formData.isJoint}
+                    className={formData.isJoint ? "bg-amber-50 border-amber-200 text-amber-900 font-bold cursor-default" : "bg-white border-gray-200"}
                   />
+                  {formData.isJoint && (
+                    <p className="text-[11px] text-amber-700 font-medium font-sans">
+                      Note: Joint runs automatically calculate and set this value based on <strong>Total Sheets Used × Matter Ups</strong>.
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-3 p-4 bg-gray-50 rounded-2xl border border-gray-200 mt-3 shadow-xs">
                   <Label className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">Job Link Workflow / Relationship</Label>
@@ -1454,31 +2261,111 @@ if ((formData as any).isJoint) {
 
                   {/* If Joint Job is selected */}
                   {formData.isJoint && (
-                    <div className="space-y-1 pt-2 animate-fadeIn transition-all">
-                      <Label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1">
-                        <span>Shared Joint Job Reference Code</span>
-                        <span className="text-red-500 font-bold">*</span>
-                      </Label>
-                      <Input 
-                        type="text" 
-                        placeholder="Job Code to share paper & plates with (e.g. A3B8)" 
-                        list="active-jobs-list"
-                        value={(formData as any).jointRef || ''} 
-                        onChange={e => handleJointJobRefChange(e.target.value)}
-                        className="bg-white h-10 text-xs rounded-xl font-mono uppercase border-gray-200 focus-visible:ring-amber-600"
-                      />
+                    <div className="space-y-4 pt-3 border-t border-dashed border-gray-200 mt-2 animate-fadeIn">
+                      <Label className="text-xs font-bold text-gray-500 uppercase">Joint Job Type Selection</Label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormData({
+                              ...formData,
+                              jointJobType: 'master',
+                              jointRef: '',
+                              jointParentId: '',
+                              sharedRunId: ''
+                            } as any);
+                          }}
+                          className={`py-2 px-3 text-xs font-semibold rounded-xl border text-center transition-all cursor-pointer ${
+                            formData.jointJobType === 'master'
+                              ? 'bg-[#5A5A40] text-white border-[#5A5A40] shadow-sm font-bold'
+                              : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                          }`}
+                        >
+                          Master Joint Job (Job A)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormData({
+                              ...formData,
+                              jointJobType: 'linked',
+                              jointRef: '',
+                              jointParentId: '',
+                              sharedRunId: '',
+                              selectedItems: getInitialSelectedItems()
+                            } as any);
+                          }}
+                          className={`py-2 px-3 text-xs font-semibold rounded-xl border text-center transition-all cursor-pointer ${
+                            formData.jointJobType === 'linked'
+                              ? 'bg-amber-700 text-white border-amber-700 shadow-sm font-bold'
+                              : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                          }`}
+                        >
+                          Linked Joint Job (Job B)
+                        </button>
+                      </div>
+
+                      {formData.jointJobType === 'master' && (
+                        <div className="p-3 bg-amber-50/50 border border-amber-100/70 rounded-xl space-y-1">
+                          <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">Master Joint Run</span>
+                          <span className="text-xs text-amber-700 font-medium">
+                            💎 Registered Run: <strong className="font-mono text-amber-900">{formData.sharedRunId || 'JR??? (Will generate on save)'}</strong>
+                          </span>
+                          <span className="block text-[10px] text-amber-600/85">Paper stock deduction happens only from this Master run. Linked jobs will share and allocate automatically.</span>
+                        </div>
+                      )}
+
+                      {formData.jointJobType === 'linked' && (
+                        <div className="space-y-4">
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1">
+                              <span>Joint Reference (Master Joint Job)</span>
+                              <span className="text-red-500 font-bold">*</span>
+                            </Label>
+                            
+                            <Select 
+                              value={formData.jointParentId || ''} 
+                              onValueChange={(val) => handleSelectParentMasterJob(val)}
+                            >
+                              <SelectTrigger className="w-full bg-white border-gray-200 h-10 rounded-xl text-xs">
+                                <SelectValue placeholder="Search Existing Master Joint Job..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectGroup>
+                                  {jobs.filter(j => j.isJoint && j.jointJobType === 'master').length === 0 ? (
+                                    <SelectItem value="none" disabled>No Master Joint Jobs found. Create a Master job first.</SelectItem>
+                                  ) : (
+                                    jobs.filter(j => j.isJoint && j.jointJobType === 'master').map(mj => (
+                                      <SelectItem key={mj.id} value={mj.id}>
+                                        {mj.sharedRunId || 'JR???'} - {mj.clientName} ({mj.jobDescription}) [code: #{mj.id.slice(-4).toUpperCase()}]
+                                      </SelectItem>
+                                    ))
+                                  )}
+                                </SelectGroup>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          {formData.jointParentId && (
+                            <div className="p-3 bg-green-50/50 border border-green-100/75 rounded-xl space-y-1">
+                              <span className="text-[10px] font-bold text-green-800 uppercase tracking-wider block">Status</span>
+                              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-green-700 font-medium font-serif font-sans">
+                                <span className="flex items-center gap-1">
+                                  ✓ Shared Run ({formData.sharedRunId || 'Pending'})
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  ✓ Paper Shared
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  ✓ Allocation Calculated
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
-                <div className="flex items-center gap-2 py-2 px-3 bg-amber-50 rounded-xl border border-amber-100 mt-2">
-                  <input 
-                    id="ignoreStockLimits"
-                    type="checkbox" 
-                    checked={!!(formData as any).ignoreStockLimits} 
-                    onChange={e => setFormData({...formData, ignoreStockLimits: e.target.checked} as any)}
-                    className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-0 cursor-pointer"
-                  />
-                  <Label htmlFor="ignoreStockLimits" className="text-xs text-amber-800 font-semibold cursor-pointer select-none">Bypass Stock Validation (Allow negative stock)</Label>
                 </div>
               </div>
 
@@ -1555,215 +2442,20 @@ if ((formData as any).isJoint) {
                 </div>
               )}
 
-              {formData.isJoint ? (
-                <div className="p-5 bg-amber-50/50 rounded-2xl border border-amber-100/70 space-y-4">
-                  <h4 className="font-serif text-sm font-semibold text-amber-900 flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-amber-500 inline-block animate-pulse"></span>
-                    Joint Print Configuration
-                  </h4>
-                  <p className="text-xs text-amber-800 leading-relaxed">
-                    Paper stock, paper rate, and printing plates are shared dynamically from referenced job{' '}
-                    <span className="font-mono font-extrabold bg-amber-100 px-1.5 py-0.5 rounded text-amber-900 border border-amber-200/60 shadow-sm">
-                      #{formData.jointRef ? formData.jointRef.toUpperCase() : '????'}
-                    </span>.
-                  </p>
-                  
-                  {(() => {
-                    const cleanRef = (formData.jointRef || '').trim().toUpperCase().replace('#', '');
-                    const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
-                    return (
-                      <div className="text-xs bg-white p-4 rounded-xl border border-gray-100/80 space-y-2.5">
-                        {matchingJob ? (
-                          <div className="space-y-3">
-                            <div className="flex justify-between items-center pb-2 border-b border-gray-100">
-                              <span className="text-gray-500 font-medium font-serif">Joint Job Reference:</span>
-                              <span className="font-semibold text-amber-950 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200/60 shadow-2xs">
-                                Job #{cleanRef} ({matchingJob.clientName})
-                              </span>
-                            </div>
-                            
-                            {/* Detected Paper */}
-                            {matchingJob.items && matchingJob.items.length > 0 && (
-                              <div className="text-[11px] text-gray-600 flex justify-between items-center">
-                                <span className="font-medium">Detected Paper Stock:</span>
-                                <span className="font-semibold text-gray-900 bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
-                                  {stocks.find(s => s.id === matchingJob.items[0].stockId)?.name || 'Unknown Paper'}
-                                </span>
-                              </div>
-                            )}
-
-                            {/* Detected Plates */}
-                            {matchingJob.platesUsed && matchingJob.platesUsed.length > 0 ? (
-                              <div className="space-y-1.5 pt-2 border-t border-gray-100">
-                                <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">Detected Shareable Plates:</span>
-                                {matchingJob.platesUsed.map((p, idx) => {
-                                  const stock = stocks.find(s => s.id === p.plateId);
-                                  if (p.isCancelled) {
-                                    return (
-                                      <div key={idx} className="flex justify-between items-center text-[11px] bg-red-50/70 px-2.5 py-1.5 rounded-lg border border-red-200/50">
-                                        <span className="font-semibold text-red-950 flex flex-wrap items-center gap-1.5">
-                                          <span>{stock?.name || 'Plate'}</span>
-                                          <span className="text-[9px] font-bold bg-red-100 text-red-800 px-1.5 py-0.5 rounded leading-none shrink-0 uppercase">Retired / Cancelled ({p.cancelledColor || 'C/M/Y/K'})</span>
-                                        </span>
-                                        <span className="text-[9px] text-red-700 italic font-bold">New Plate Will Be Remade</span>
-                                      </div>
-                                    );
-                                  }
-                                  return (
-                                    <div key={idx} className="flex justify-between items-center text-[11px] bg-amber-50/40 px-2.5 py-1.5 rounded-lg border border-amber-100/40">
-                                      <span className="font-semibold text-amber-950">{stock?.name || 'Plate'}</span>
-                                      <span className="font-mono bg-amber-100/80 px-2 py-0.5 rounded text-amber-900 font-extrabold">{p.count} plates</span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            ) : (
-                              <div className="text-[11px] text-gray-500 italic pt-1.5 border-t border-gray-100">
-                                No plates detected in the referenced job.
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="text-gray-400 italic text-center py-2 font-serif">
-                            {formData.jointRef ? 'Searching / Loading referenced job details...' : 'Please enter a valid four-digit job code above'}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="joint-ups" className="text-xs font-bold text-gray-500 uppercase">Matter Ups</Label>
-                      <Input 
-                        id="joint-ups"
-                        type="number" 
-                        placeholder="e.g. 4"
-                        value={formData.selectedItems[0]?.ups || ''} 
-                        onChange={e => {
-                          const val = e.target.value === '' ? undefined : Number(e.target.value);
-                          const firstItem = formData.selectedItems[0] || { stockId: '', rate: 0, quantityUsed: 0, isJoint: true };
-                          const cleanRef = (formData as any).jointRef ? (formData as any).jointRef.trim().toUpperCase().replace('#', '') : '';
-                          const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
-                          
-                          const updatedItem = {
-                            ...firstItem,
-                            stockId: matchingJob?.items?.[0]?.stockId || firstItem.stockId || '',
-                            rate: firstItem.rate || matchingJob?.items?.[0]?.rate || 0,
-                            ups: val,
-                            isJoint: true,
-                            paperRef: (formData as any).jointRef || ''
-                          };
-                          
-                          // Auto calculate sheets if we have orderedQuantity and ups
-                          const ordered = Number(formData.orderedQuantity) || 0;
-                          const upsVal = Number(val) || 1;
-                          if (upsVal > 0 && ordered > 0) {
-                            const calculated = Math.ceil(ordered / upsVal);
-                            updatedItem.calculatedSheets = calculated;
-                            updatedItem.quantityUsed = calculated;
-                          }
-                          
-                          setFormData({
-                            ...formData,
-                            selectedItems: [updatedItem]
-                          });
-                        }}
-                        className="bg-white border-gray-200 h-10"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label htmlFor="joint-sheets" className="text-xs font-bold text-gray-500 uppercase">Sheet Required</Label>
-                      <Input 
-                        id="joint-sheets"
-                        type="number" 
-                        placeholder="e.g. 5000"
-                        value={formData.selectedItems[0]?.calculatedSheets || formData.selectedItems[0]?.quantityUsed || ''} 
-                        onChange={e => {
-                          const val = e.target.value === '' ? 0 : Number(e.target.value);
-                          const firstItem = formData.selectedItems[0] || { stockId: '', rate: 0, ups: undefined, isJoint: true };
-                          const cleanRef = (formData as any).jointRef ? (formData as any).jointRef.trim().toUpperCase().replace('#', '') : '';
-                          const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
-                          
-                          const updatedItem = {
-                            ...firstItem,
-                            stockId: matchingJob?.items?.[0]?.stockId || firstItem.stockId || '',
-                            rate: firstItem.rate || matchingJob?.items?.[0]?.rate || 0,
-                            calculatedSheets: val,
-                            quantityUsed: val,
-                            autoCalculate: false,
-                            isJoint: true,
-                            paperRef: (formData as any).jointRef || ''
-                          };
-                          
-                          setFormData({
-                            ...formData,
-                            selectedItems: [updatedItem]
-                          });
-                        }}
-                        className="bg-white border-gray-200 h-10"
-                        required
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label htmlFor="joint-paper-rate" className="text-xs font-bold text-gray-500 uppercase">Paper Rate (₹/500 sheets)</Label>
-                      <Input 
-                        id="joint-paper-rate"
-                        type="number" 
-                        step="any"
-                        placeholder="0.00"
-                        value={formData.selectedItems[0]?.rate === 0 ? '' : (formData.selectedItems[0]?.rate ?? '')} 
-                        onChange={e => {
-                          const val = e.target.value === '' ? 0 : Number(e.target.value);
-                          const firstItem = formData.selectedItems[0] || { stockId: '', rate: 0, quantityUsed: 0, isJoint: true };
-                          const updatedItem = {
-                            ...firstItem,
-                            rate: val,
-                            isJoint: true,
-                            paperRef: (formData as any).jointRef || ''
-                          };
-                          setFormData({
-                            ...formData,
-                            selectedItems: [updatedItem]
-                          });
-                        }}
-                        className="bg-white border-gray-200 h-10"
-                        required
-                      />
-                      {(() => {
-                        const rate = formData.selectedItems[0]?.rate || 0;
-                        const sheets = formData.selectedItems[0]?.calculatedSheets || formData.selectedItems[0]?.quantityUsed || 0;
-                        const ratePerSheet = rate / 500;
-                        const paperCost = (sheets / 500) * rate;
-                        if (rate > 0) {
-                          return (
-                            <p className="text-[11px] text-sky-800 font-mono mt-1">
-                              ≈ ₹{ratePerSheet.toFixed(4)}/sheet | Cost for {sheets.toLocaleString()} sheets: <strong className="font-bold">₹{paperCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong>
-                            </p>
-                          );
-                        }
-                        return null;
-                      })()}
-                    </div>
-                  </div>
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <Label className="text-lg font-serif">Papers Used</Label>
+                  <Button type="button" variant="outline" size="sm" onClick={handleAddItem} className="rounded-full">
+                    <Plus className="mr-1 h-3 w-3" /> Add Paper
+                  </Button>
                 </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex justify-between items-center">
-                    <Label className="text-lg font-serif">Papers Used</Label>
-                    <Button type="button" variant="outline" size="sm" onClick={handleAddItem} className="rounded-full">
-                      <Plus className="mr-1 h-3 w-3" /> Add Paper
-                    </Button>
-                  </div>
-                  
-                  {formData.selectedItems.map((item, index) => {
-                    const isAuto = !formData.isJoint ? false : (item.autoCalculate !== undefined ? item.autoCalculate : true);
-                    
-                    return (
-                      <div key={index} className="p-5 bg-white rounded-2xl border border-gray-200 shadow-sm space-y-4 relative">
-                        <div className="absolute top-4 right-4">
+                
+                {formData.selectedItems.map((item, index) => {
+                  const isLinkedJob = !!(formData.isJoint && formData.jointJobType === 'linked');
+                  return (
+                    <div key={index} className="p-5 bg-white rounded-2xl border border-gray-200 shadow-sm space-y-4 relative">
+                      <div className="absolute top-4 right-4 animate-fadeIn">
+                        {!isLinkedJob && (
                           <Button 
                             type="button" 
                             variant="ghost" 
@@ -1773,168 +2465,140 @@ if ((formData as any).isJoint) {
                           >
                             Remove Paper
                           </Button>
+                        )}
+                      </div>
+
+                      <h4 className="font-serif text-sm font-semibold text-gray-700">Paper Item #{index + 1}</h4>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                        {/* Paper Stock */}
+                        <div className="md:col-span-6 space-y-1.5">
+                          <Label className="text-xs font-bold text-gray-500 uppercase">Select Paper Stock</Label>
+                          {isLinkedJob ? (
+                            <Input 
+                              value={stocks.find(s => s.id === item.stockId)?.name || 'Matching Parent Stock'} 
+                              readOnly 
+                              className="bg-gray-100 border-gray-200 h-9 cursor-not-allowed text-gray-600 font-medium"
+                            />
+                          ) : (
+                            <StockSelect 
+                              value={item.stockId} 
+                              onValueChange={(v) => handleItemChange(index, 'stockId', v)}
+                              stocks={stocks}
+                              type="paper"
+                              placeholder="Choose paper..."
+                            />
+                          )}
                         </div>
 
-                        <h4 className="font-serif text-sm font-semibold text-gray-700">Paper Item #{index + 1}</h4>
-                        
-                        {!formData.isJoint ? (
-                          // Standard / Non-Joint Job Layout
-                          <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                            <div className="md:col-span-6 space-y-1.5">
-                              <Label className="text-xs font-bold text-gray-500 uppercase">Select Paper Stock</Label>
-                              <StockSelect 
-                                value={item.stockId} 
-                                onValueChange={(v) => handleItemChange(index, 'stockId', v)}
-                                stocks={stocks}
-                                type="paper"
-                                placeholder="Choose paper..."
-                              />
-                            </div>
-                            
-                            <div className="md:col-span-3 space-y-1.5">
-                              <Label className="text-xs font-bold text-gray-500 uppercase">Actual Sheets Used</Label>
-                              <Input 
-                                type="number" 
-                                value={item.quantityUsed === 0 ? '' : item.quantityUsed} 
-                                onChange={e => handleItemChange(index, 'quantityUsed', e.target.value === '' ? 0 : Number(e.target.value))} 
-                                onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                                required
-                                placeholder="sheets"
-                                className="bg-gray-50 border-gray-200 h-9"
-                              />
-                            </div>
-                          </div>
-                        ) : (
-                          // Joint Job Layout
-                          <>
-                            <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                              <div className="md:col-span-6 space-y-1.5">
-                                <Label className="text-xs font-bold text-gray-500 uppercase">Select Paper Stock</Label>
-                                <StockSelect 
-                                  value={item.stockId} 
-                                  onValueChange={(v) => handleItemChange(index, 'stockId', v)}
-                                  stocks={stocks}
-                                  type="paper"
-                                  placeholder="Choose paper..."
-                                />
-                              </div>
-
-                              <div className="md:col-span-3 space-y-1.5">
-                                <Label className="text-xs font-bold text-gray-500 uppercase">Rate/500 shs (₹)</Label>
-                                <Input 
-                                  type="number" 
-                                  step="any"
-                                  placeholder="0.00"
-                                  value={item.rate === 0 ? '' : item.rate} 
-                                  onChange={e => handleItemChange(index, 'rate', e.target.value === '' ? 0 : Number(e.target.value))} 
-                                  onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                                  required 
-                                  className="bg-gray-50 border-gray-200 h-9"
-                                />
-                                {item.rate ? (
-                                  <p className="text-[10px] text-sky-700 font-mono italic mt-0.5">
-                                    ≈ ₹{((item.rate || 0) / 500).toFixed(4)}/sheet
-                                  </p>
-                                ) : null}
-                              </div>
-
-                              <div className="md:col-span-3 space-y-1.5">
-                                <Label className="text-xs font-bold text-gray-500 uppercase">Matter Ups</Label>
-                                <Input 
-                                  type="number" 
-                                  placeholder="e.g. 4"
-                                  value={item.ups || ''} 
-                                  onChange={e => handleItemChange(index, 'ups', e.target.value === '' ? undefined : Number(e.target.value))} 
-                                  onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                                  className="bg-gray-50 border-gray-200 h-9"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-2 border-t border-gray-100 items-center">
-                              <div className="md:col-span-5 flex items-center gap-2">
-                                <input 
-                                  type="checkbox" 
-                                  id={`calc-${index}`}
-                                  checked={isAuto}
-                                  onChange={e => handleItemChange(index, 'autoCalculate', e.target.checked)}
-                                  className="h-4 w-4 rounded border-gray-300 text-[#5A5A40] focus:ring-0 cursor-pointer"
-                                />
-                                <Label htmlFor={`calc-${index}`} className="text-xs text-gray-600 font-semibold cursor-pointer select-none">Auto Calculate sheets required</Label>
-                              </div>
-
-                             <div className="md:col-span-4 space-y-1">
-  <Label className="text-xs font-bold text-gray-500 uppercase">
-    Actual Sheets Used
-  </Label>
-
-  <Input
-    type="number"
-    value={item.quantityUsed === 0 ? '' : item.quantityUsed}
-    onChange={e =>
-      handleItemChange(
-        index,
-        'quantityUsed',
-        e.target.value === '' ? 0 : Number(e.target.value)
-      )
-    }
-    onFocus={e => {
-      if (e.target.value === '0') e.target.select();
-    }}
-    required={!formData.isJoint}
-    placeholder="sheets"
-    className="bg-gray-50 border-gray-200 h-9"
-  />
-</div>
-
-<div className="md:col-span-3 space-y-1">
-  <Label className="text-xs font-bold text-gray-500 uppercase">
-    Allocated Paper
-  </Label>
-
-  <Input
-    value={(item.allocatedPaper || 0).toLocaleString()}
-    readOnly
-    placeholder="Auto Calculated"
-    className="bg-green-50 border-green-200 h-9 font-semibold text-green-700"
-  />
-</div>
-                            </div>
-                          </>
-                        )}
-                        {!!item.isJoint && item.paperRef && (
-                          <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 md:bg-amber-50/70 border border-amber-100 text-[11px] text-amber-800 rounded-lg">
-                            <span className="font-semibold font-mono bg-amber-200/60 px-1 py-0.5 rounded">Joint Job Reference: #{item.paperRef}</span>
-                            <span>(Actual paper sheets detected from the matched referenced job's stock)</span>
-                          </div>
-                        )}
-
-                        {/* Calculated rates display for single item */}
-                        {(() => {
-                          const billingSheets = isAuto ? (item.calculatedSheets || 0) : (item.quantityUsed || 0);
-                          const ratePerSheet = (item.rate || 0) / 500;
-                          const paperCost = (billingSheets / 500) * (item.rate || 0);
-                          if (item.rate || billingSheets) {
-                            return (
-                              <div className="p-3 bg-sky-50/40 border border-sky-100 rounded-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs text-sky-900 font-mono">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-sky-500"></span>
-                                  <span className="font-serif font-semibold text-sky-950">Calculated Paper Price:</span>
-                                </div>
-                                <div className="flex flex-wrap gap-x-4 gap-y-1">
-                                  <span>Unit Cost: <strong className="font-bold">₹{ratePerSheet.toFixed(4)}</strong>/sheet</span>
-                                  <span>Total: <strong className="font-extrabold text-sky-950 underline">₹{paperCost.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> for {billingSheets.toLocaleString()} shs</span>
-                                </div>
-                              </div>
-                            );
-                          }
-                          return null;
-                        })()}
+                        {/* Matter Ups */}
+                        <div className="md:col-span-6 space-y-1.5">
+                          <Label className="text-xs font-bold text-gray-500 uppercase">Matter Ups</Label>
+                          <Input 
+                            type="number" 
+                            placeholder="e.g. 1"
+                            value={item.ups || ''} 
+                            onChange={e => handleItemChange(index, 'ups', e.target.value === '' ? undefined : Number(e.target.value))} 
+                            onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                            className="bg-gray-50 border-gray-200 h-9"
+                          />
+                        </div>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
+
+                      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-2 border-t border-gray-100">
+                        {/* Total Sheets Used */}
+                        <div className="md:col-span-4 space-y-1.5">
+                          <Label className="text-xs font-bold text-gray-500 uppercase">
+                            {formData.isJoint ? "Total Sheets Used" : "Actual Sheets Used"}
+                          </Label>
+                          <Input 
+                            type="number" 
+                            value={item.quantityUsed === 0 ? '' : item.quantityUsed} 
+                            onChange={e => handleItemChange(index, 'quantityUsed', e.target.value === '' ? 0 : Number(e.target.value))} 
+                            onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                            required
+                            readOnly={isLinkedJob}
+                            placeholder={isLinkedJob ? "Linked from parent" : "sheets"}
+                            className={`${isLinkedJob ? "bg-gray-100 cursor-not-allowed text-gray-600 font-medium" : "bg-gray-50"} border-gray-200 h-9`}
+                          />
+                        </div>
+
+                        {/* Wastage Sheets */}
+                        <div className="md:col-span-4 space-y-1.5">
+                          <Label className="text-xs font-bold text-gray-500 uppercase">Wastage Sheets</Label>
+                          <Input 
+                            type="number" 
+                            value={item.wastageSheets === undefined ? 0 : item.wastageSheets} 
+                            onChange={e => handleItemChange(index, 'wastageSheets', e.target.value === '' ? 0 : Number(e.target.value))} 
+                            onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                            readOnly={isLinkedJob}
+                            placeholder={isLinkedJob ? "Linked from parent" : "sheets"}
+                            className={`${isLinkedJob ? "bg-gray-100 cursor-not-allowed text-gray-600 font-medium" : "bg-gray-50"} border-gray-200 h-9`}
+                          />
+                        </div>
+
+                        {/* Allocated Paper */}
+                        <div className="md:col-span-4 space-y-1.5">
+                          <Label className="text-xs font-bold text-gray-500 uppercase">Allocated Paper</Label>
+                          <Input 
+                            value={(item.allocatedPaper || 0).toLocaleString()}
+                            readOnly
+                            placeholder="Auto Calculated"
+                            className="bg-green-50 border-green-200 h-9 font-semibold text-green-700 cursor-default"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-2 border-t border-gray-100">
+                        {/* Paper Rate */}
+                        <div className="md:col-span-4 space-y-1.5">
+                          <Label className="text-xs font-bold text-gray-500 uppercase">Paper Rate (per sheet)</Label>
+                          <Input 
+                            type="number" 
+                            step="any"
+                            placeholder="e.g. 1.50" 
+                            value={item.paperRate || ''} 
+                            onChange={e => handleItemChange(index, 'paperRate', e.target.value === '' ? 0 : Number(e.target.value))} 
+                            onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                            readOnly={isLinkedJob}
+                            className={`${isLinkedJob ? "bg-gray-100 cursor-not-allowed text-gray-600 font-medium" : "bg-gray-50"} border-gray-200 h-9`}
+                          />
+                        </div>
+
+                        {/* Produced Quantity */}
+                        <div className="md:col-span-4 space-y-1.5">
+                          <Label className="text-xs font-bold text-gray-500 uppercase">Produced Quantity (Read Only)</Label>
+                          <Input 
+                            value={((item.quantityUsed || 0) * (item.ups || 1)).toLocaleString()}
+                            readOnly
+                            placeholder="Sheets × Ups"
+                            className="bg-blue-50 border-blue-200 h-9 font-semibold text-blue-700 cursor-default"
+                          />
+                        </div>
+
+                        {/* Estimated cost display */}
+                        <div className="md:col-span-4 flex flex-col justify-end">
+                          {item.stockId && (
+                            <div className="p-2 py-1.5 bg-gray-50 border border-gray-150 rounded-lg text-right h-9 flex items-center justify-between px-3 text-xs text-gray-600">
+                              <span className="font-medium">Total Paper Cost:</span>
+                              <span className="font-bold text-gray-900 font-mono">
+                                AED {((item.quantityUsed || 0) * (item.paperRate || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {isLinkedJob && item.paperRef && (
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 md:bg-amber-50/70 border border-amber-100 text-[11px] text-amber-800 rounded-lg animate-fadeIn">
+                          <span className="font-semibold font-mono bg-amber-200/60 px-1 py-0.5 rounded">Joint Job Reference: #{item.paperRef}</span>
+                          <span>(Paper Stock and Rate inherited automatically from Parent Master Job)</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
 
               <div className="space-y-4 pt-4 border-t border-gray-100">
                 <div className="flex justify-between items-center">
@@ -2308,62 +2972,6 @@ if ((formData as any).isJoint) {
                 </div>
               </div>
 
-              {/* Live Cost Calculation Summary Badge in Add Job modal */}
-              {(() => {
-                let paperTotal = 0;
-                formData.selectedItems.forEach(item => {
-                  const isAuto = !formData.isJoint ? false : (item.autoCalculate !== undefined ? item.autoCalculate : true);
-                  const billingSheets = isAuto ? (item.calculatedSheets || 0) : (item.quantityUsed || 0);
-                  paperTotal += (billingSheets / 500) * (item.rate || 0);
-                });
-
-                let plateTotal = 0;
-                formData.platesUsed.forEach(plate => {
-                  plateTotal += (plate.count || 0) * (plate.rate || 0);
-                });
-
-                let processTotal = 0;
-                formData.processCharges.forEach(pc => {
-                  processTotal += (pc.amount || 0);
-                });
-
-                let laminationTotal = 0;
-                if (formData.lamination?.halfEnabled) {
-                  laminationTotal += (formData.lamination.halfQty || 0) * (formData.lamination.halfRate || 0);
-                }
-                if (formData.lamination?.fullEnabled) {
-                  laminationTotal += (formData.lamination.fullQty || 0) * (formData.lamination.fullRate || 0);
-                }
-
-                const grandTotal = paperTotal + plateTotal + processTotal + laminationTotal;
-
-                if (grandTotal > 0) {
-                  return (
-                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-2 mb-3">
-                      <span className="text-[11px] font-bold text-slate-500 uppercase tracking-widest block font-mono">Live Billing Estimation</span>
-                      <div className="grid grid-cols-2 gap-y-1.5 text-xs text-slate-700 font-mono">
-                        <span>Paper Stock (Total):</span>
-                        <span className="text-right font-semibold">₹{paperTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        <span>Plates & screen (Total):</span>
-                        <span className="text-right font-semibold">₹{plateTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        <span>Process charges:</span>
-                        <span className="text-right font-semibold">₹{processTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        {(formData.lamination?.halfEnabled || formData.lamination?.fullEnabled) && (
-                          <>
-                            <span>Lamination charges:</span>
-                            <span className="text-right font-semibold">₹{laminationTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                          </>
-                        )}
-                        <div className="col-span-2 border-t border-slate-200 pt-1.5 flex justify-between items-center text-sm font-bold text-slate-900 font-serif">
-                          <span>Total Estimated Cost:</span>
-                          <span className="text-right font-mono text-[#A8201A]">₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }
-                return null;
-              })()}
               <DialogFooter>
                 <Button type="submit" className="bg-[#5A5A40] hover:bg-[#4A4A30] w-full h-12 rounded-full text-lg">
                   Confirm Job & Update Stock
@@ -2372,6 +2980,7 @@ if ((formData as any).isJoint) {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
         </div>
       <Card className="border-none shadow-sm bg-white rounded-[20px] md:rounded-[24px] overflow-hidden">
         <CardHeader className="p-4 md:p-6 border-b border-gray-100 bg-gray-50/50">
@@ -2530,66 +3139,35 @@ if ((formData as any).isJoint) {
                         className="h-8 text-xs md:text-sm text-gray-500 hover:text-[#5A5A40] rounded-full"
                         onClick={() => {
                           setEditingJob(job);
-                          const jobRef = job.jointRef || job.items.find(i => i.isJoint)?.paperRef || (job.platesUsed || []).find(p => p.isJoint)?.plateRef || '';
-                          const cleanRef = jobRef.trim().toUpperCase().replace('#', '');
-                          const matchingParentJob = cleanRef ? jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef) : null;
-                          
+                          const jobRef = job.jointRef || '';
+                          const masterJob = jobs.find(j => 
+                            (job.sharedRunId && j.sharedRunId === job.sharedRunId && j.jointJobType === 'master') ||
+                            (jobRef && j.id.slice(-4).toUpperCase() === jobRef.trim().toUpperCase().replace('#', ''))
+                          );
+                          const jointParentId = masterJob?.id || '';
+
                           const childPlates = (job.platesUsed && job.platesUsed.length > 0) ? [...job.platesUsed] : [];
-                          let resolvedPlates = [...childPlates];
                           
-                          if (matchingParentJob && matchingParentJob.platesUsed && matchingParentJob.platesUsed.length > 0) {
-                            const jointPlatesResolved = matchingParentJob.platesUsed.map(p => {
-                              const stockDefault = stocks.find(s => s.id === p.plateId)?.defaultRate || 0;
-                              return {
-                                ...p,
-                                rate: p.rate || stockDefault,
-                                isJoint: true,
-                                plateRef: jobRef
-                              };
-                            });
-                            
-                            resolvedPlates = [
-                              ...childPlates.filter(p => !p.isJoint),
-                              ...jointPlatesResolved
-                            ];
-                          }
-                          
-                          if (resolvedPlates.length === 0 && (job.isJoint || jobRef)) {
-                            resolvedPlates = [{ plateId: '', count: 0, rate: 0, isJoint: true, plateRef: jobRef }];
-                          }
-
-                          let resolvedItems = [...job.items];
-                          if ((job.isJoint || jobRef) && matchingParentJob && matchingParentJob.items?.[0]) {
-                            const parentItem = matchingParentJob.items[0];
-                            resolvedItems = resolvedItems.map((item, idx) => {
-                              if (idx === 0) {
-                                return {
-                                  ...item,
-                                  stockId: parentItem.stockId || item.stockId,
-                                  rate: parentItem.rate || item.rate,
-                                  ups: parentItem.ups !== undefined ? parentItem.ups : item.ups,
-                                  quantityUsed: parentItem.quantityUsed || item.quantityUsed,
-                                  calculatedSheets: parentItem.calculatedSheets || item.calculatedSheets,
-                                  isJoint: true,
-                                  paperRef: jobRef
-                                };
-                              }
-                              return item;
-                            });
-                          }
-
                           setFormData({
                             clientName: job.clientName,
                             jobDescription: job.jobDescription,
-                            selectedItems: resolvedItems,
-                            platesUsed: resolvedPlates,
+                            selectedItems: job.items || [],
+                            platesUsed: childPlates,
                             processCharges: loadProcessChargesForEditing(job),
                             lamination: job.lamination || getInitialLamination(),
                             ignoreStockLimits: false,
                             orderedQuantity: job.orderedQuantity || '',
-                            isJoint: !!job.isJoint || job.items.some(i => i.isJoint) || (job.platesUsed || []).some(p => p.isJoint),
+                            isJoint: !!job.isJoint,
+                            jointJobType: job.jointJobType || '',
+                            sharedRunId: job.sharedRunId || '',
+                            jointParentId: jointParentId,
                             jointRef: jobRef,
-                            date: job.date ? format(new Date(job.date), 'yyyy-MM-dd') : new Date().toISOString().split('T')[0]
+                            isRepeat: !!job.isRepeat,
+                            repeatRef: job.repeatRef || '',
+                            date: job.date ? format(new Date(job.date), 'yyyy-MM-dd') : new Date().toISOString().split('T')[0],
+                            paperBillingMethod: job.paperBillingMethod || '',
+                            paperBillingRate: job.paperBillingRate || 0,
+                            paperBillingAmount: job.paperBillingAmount || 0
                           } as any);
                         }}
                       >
@@ -2760,7 +3338,8 @@ if ((formData as any).isJoint) {
                                   })
                                 : [];
                               
-                              const isAdditional = !!plate.isAdditionalPlate || ((job.isJoint || (job.jointRef && job.jointRef.trim() !== '')) && !plate.isJoint && !plate.isJointRef);
+                              const isDefaultPlate = idx === 0;
+                              const isAdditional = !isDefaultPlate && !!plate.isAdditionalPlate;
                               
                               return (
                                 <div key={`plate-${idx}`} className={`flex flex-col gap-1.5 p-2 md:p-3 rounded-xl border flex-1 min-w-[200px] ${
@@ -2906,6 +3485,7 @@ if ((formData as any).isJoint) {
                       </>
                     );
                   })()}
+                  </div>
 
                       {/* Shared Materials Details Card */}
                       {(() => {
@@ -3016,7 +3596,6 @@ if ((formData as any).isJoint) {
                       )}
                     </div>
                   </div>
-                </div>
               </motion.div>
             ))}
             {filteredJobs.length === 0 && (
@@ -3066,7 +3645,7 @@ if ((formData as any).isJoint) {
       {editingJob && (
         <Dialog open={!!editingJob} onOpenChange={() => {
           setEditingJob(null);
-          setFormData({ clientName: '', jobDescription: '', selectedItems: [], platesUsed: [], processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '', isRepeat: false, repeatRef: '', date: new Date().toISOString().split('T')[0] } as any);
+          setFormData({ clientName: '', jobDescription: '', selectedItems: getInitialSelectedItems(), platesUsed: getInitialPlatesUsed(), processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '', isRepeat: false, repeatRef: '', date: new Date().toISOString().split('T')[0], paperBillingMethod: '', paperBillingRate: 0, paperBillingAmount: 0 } as any);
         }}>
           <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -3106,16 +3685,23 @@ if ((formData as any).isJoint) {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="edit-orderedQuantity" className="flex items-center gap-1">
-                    <span>Ordered Finished Product Quantity</span>
+                  <Label htmlFor="edit-orderedQuantity" className="flex items-center gap-1 text-sm font-semibold text-gray-700">
+                    <span>{formData.isJoint ? "Produced Finished Product Quantity (Read-only for Joint Jobs)" : "Ordered Finished Product Quantity"}</span>
                   </Label>
                   <Input 
                     id="edit-orderedQuantity" 
                     type="number" 
-                    placeholder="e.g. 10000" 
+                    placeholder={formData.isJoint ? "Total Sheets Used × Matter Ups" : "e.g. 10000"} 
                     value={formData.orderedQuantity} 
                     onChange={e => handleOrderedQuantityChange(e.target.value)} 
+                    readOnly={formData.isJoint}
+                    className={formData.isJoint ? "bg-amber-50 border-amber-200 text-amber-900 font-bold cursor-default" : "bg-white border-gray-200"}
                   />
+                  {formData.isJoint && (
+                    <p className="text-[11px] text-amber-700 font-medium font-sans">
+                      Note: Joint runs automatically calculate and set this value based on <strong>Total Sheets Used × Matter Ups</strong>.
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-3 p-4 bg-gray-50 rounded-2xl border border-gray-200 mt-3 shadow-xs">
                   <Label className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">Job Link Workflow / Relationship</Label>
@@ -3175,22 +3761,113 @@ if ((formData as any).isJoint) {
 
                   {/* If Joint Job is selected */}
                   {formData.isJoint && (
-                    <div className="space-y-1 pt-2 animate-fadeIn transition-all">
-                      <Label className="text-[10px] font-bold text-gray-500 uppercase flex items-center gap-1">
-                        <span>Shared Joint Job Reference Code</span>
-                        <span className="text-red-500 font-bold">*</span>
-                      </Label>
-                      <Input 
-                        type="text" 
-                        placeholder="Job Code to share paper & plates with (e.g. A3B8)" 
-                        list="active-jobs-list"
-                        value={(formData as any).jointRef || ''} 
-                        onChange={e => handleJointJobRefChange(e.target.value)}
-                        className="bg-white h-10 text-xs rounded-xl font-mono uppercase border-gray-200 focus-visible:ring-amber-600"
-                      />
+                    <div className="space-y-4 pt-3 border-t border-dashed border-gray-200 mt-2 animate-fadeIn">
+                      <Label className="text-xs font-bold text-gray-500 uppercase">Joint Job Type Selection</Label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormData({
+                              ...formData,
+                              jointJobType: 'master',
+                              jointRef: '',
+                              jointParentId: '',
+                              sharedRunId: ''
+                            } as any);
+                          }}
+                          className={`py-2 px-3 text-xs font-semibold rounded-xl border text-center transition-all cursor-pointer ${
+                            formData.jointJobType === 'master'
+                              ? 'bg-[#5A5A40] text-white border-[#5A5A40] shadow-sm font-bold'
+                              : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                          }`}
+                        >
+                          Master Joint Job (Job A)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormData({
+                              ...formData,
+                              jointJobType: 'linked',
+                              jointRef: '',
+                              jointParentId: '',
+                              sharedRunId: '',
+                              selectedItems: getInitialSelectedItems()
+                            } as any);
+                          }}
+                          className={`py-2 px-3 text-xs font-semibold rounded-xl border text-center transition-all cursor-pointer ${
+                            formData.jointJobType === 'linked'
+                              ? 'bg-amber-700 text-white border-amber-700 shadow-sm font-bold'
+                              : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                          }`}
+                        >
+                          Linked Joint Job (Job B)
+                        </button>
+                      </div>
+
+                      {formData.jointJobType === 'master' && (
+                        <div className="p-3 bg-amber-50/50 border border-amber-100/70 rounded-xl space-y-1">
+                          <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">Master Joint Run</span>
+                          <span className="text-xs text-amber-700 font-medium">
+                            💎 Registered Run: <strong className="font-mono text-amber-900">{formData.sharedRunId || 'JR??? (Will generate on save)'}</strong>
+                          </span>
+                          <span className="block text-[10px] text-amber-600/85">Paper stock deduction happens only from this Master run. Linked jobs will share and allocate automatically.</span>
+                        </div>
+                      )}
+
+                      {formData.jointJobType === 'linked' && (
+                        <div className="space-y-4">
+                          <div className="space-y-1.5">
+                            <Label className="text-xs font-bold text-gray-500 uppercase flex items-center gap-1">
+                              <span>Joint Reference (Master Joint Job)</span>
+                              <span className="text-red-500 font-bold">*</span>
+                            </Label>
+                            
+                            <Select 
+                              value={formData.jointParentId || ''} 
+                              onValueChange={(val) => handleSelectParentMasterJob(val)}
+                            >
+                              <SelectTrigger className="w-full bg-white border-gray-200 h-10 rounded-xl text-xs">
+                                <SelectValue placeholder="Search Existing Master Joint Job..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectGroup>
+                                  {jobs.filter(j => j.isJoint && j.jointJobType === 'master').length === 0 ? (
+                                    <SelectItem value="none" disabled>No Master Joint Jobs found. Create a Master job first.</SelectItem>
+                                  ) : (
+                                    jobs.filter(j => j.isJoint && j.jointJobType === 'master').map(mj => (
+                                      <SelectItem key={mj.id} value={mj.id}>
+                                        {mj.sharedRunId || 'JR???'} - {mj.clientName} ({mj.jobDescription}) [code: #{mj.id.slice(-4).toUpperCase()}]
+                                      </SelectItem>
+                                    ))
+                                  )}
+                                </SelectGroup>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          {formData.jointParentId && (
+                            <div className="p-3 bg-green-50/50 border border-green-100/75 rounded-xl space-y-1">
+                              <span className="text-[10px] font-bold text-green-800 uppercase tracking-wider block">Status</span>
+                              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-green-700 font-medium font-serif font-sans">
+                                <span className="flex items-center gap-1">
+                                  ✓ Shared Run ({formData.sharedRunId || 'Pending'})
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  ✓ Paper Shared
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  ✓ Allocation Calculated
+                                </span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
+              </div>
                
               {formData.isRepeat && (
                 <div className="p-5 bg-emerald-50/50 rounded-2xl border border-emerald-100/70 space-y-4 mb-3">
@@ -3265,215 +3942,20 @@ if ((formData as any).isJoint) {
                 </div>
               )}
 
-              {formData.isJoint ? (
-                <div className="p-5 bg-amber-50/50 rounded-2xl border border-amber-100/70 space-y-4">
-                  <h4 className="font-serif text-sm font-semibold text-amber-900 flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-amber-500 inline-block animate-pulse"></span>
-                    Joint Print Configuration
-                  </h4>
-                  <p className="text-xs text-amber-800 leading-relaxed">
-                    Paper stock, paper rate, and printing plates are shared dynamically from referenced job{' '}
-                    <span className="font-mono font-extrabold bg-amber-100 px-1.5 py-0.5 rounded text-amber-900 border border-amber-200/60 shadow-sm">
-                      #{formData.jointRef ? formData.jointRef.toUpperCase() : '????'}
-                    </span>.
-                  </p>
-                  
-                  {(() => {
-                    const cleanRef = (formData.jointRef || '').trim().toUpperCase().replace('#', '');
-                    const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
-                    return (
-                      <div className="text-xs bg-white p-4 rounded-xl border border-gray-100/80 space-y-2.5">
-                        {matchingJob ? (
-                          <div className="space-y-3">
-                            <div className="flex justify-between items-center pb-2 border-b border-gray-100">
-                              <span className="text-gray-500 font-medium font-serif">Joint Job Reference:</span>
-                              <span className="font-semibold text-amber-950 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200/60 shadow-2xs">
-                                Job #{cleanRef} ({matchingJob.clientName})
-                              </span>
-                            </div>
-                            
-                            {/* Detected Paper */}
-                            {matchingJob.items && matchingJob.items.length > 0 && (
-                              <div className="text-[11px] text-gray-600 flex justify-between items-center">
-                                <span className="font-medium">Detected Paper Stock:</span>
-                                <span className="font-semibold text-gray-900 bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
-                                  {stocks.find(s => s.id === matchingJob.items[0].stockId)?.name || 'Unknown Paper'}
-                                </span>
-                              </div>
-                            )}
-
-                            {/* Detected Plates */}
-                            {matchingJob.platesUsed && matchingJob.platesUsed.length > 0 ? (
-                              <div className="space-y-1.5 pt-2 border-t border-gray-100">
-                                <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">Detected Shareable Plates:</span>
-                                {matchingJob.platesUsed.map((p, idx) => {
-                                  const stock = stocks.find(s => s.id === p.plateId);
-                                  if (p.isCancelled) {
-                                    return (
-                                      <div key={idx} className="flex justify-between items-center text-[11px] bg-red-50/70 px-2.5 py-1.5 rounded-lg border border-red-200/50">
-                                        <span className="font-semibold text-red-950 flex flex-wrap items-center gap-1.5">
-                                          <span>{stock?.name || 'Plate'}</span>
-                                          <span className="text-[9px] font-bold bg-red-100 text-red-800 px-1.5 py-0.5 rounded leading-none shrink-0 uppercase">Retired / Cancelled ({p.cancelledColor || 'C/M/Y/K'})</span>
-                                        </span>
-                                        <span className="text-[9px] text-red-700 italic font-bold">New Plate Will Be Remade</span>
-                                      </div>
-                                    );
-                                  }
-                                  return (
-                                    <div key={idx} className="flex justify-between items-center text-[11px] bg-amber-50/40 px-2.5 py-1.5 rounded-lg border border-amber-100/40">
-                                      <span className="font-semibold text-amber-950">{stock?.name || 'Plate'}</span>
-                                      <span className="font-mono bg-amber-100/80 px-2 py-0.5 rounded text-amber-900 font-extrabold">{p.count} plates</span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            ) : (
-                              <div className="text-[11px] text-gray-500 italic pt-1.5 border-t border-gray-100">
-                                No plates detected in the referenced job.
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="text-gray-400 italic text-center py-2 font-serif">
-                            {formData.jointRef ? 'Searching / Loading referenced job details...' : 'Please enter a valid four-digit job code above'}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="edit-joint-ups" className="text-xs font-bold text-gray-500 uppercase">Matter Ups</Label>
-                      <Input 
-                        id="edit-joint-ups"
-                        type="number" 
-                        placeholder="e.g. 4"
-                        value={formData.selectedItems[0]?.ups || ''} 
-                        onChange={e => {
-                          const val = e.target.value === '' ? undefined : Number(e.target.value);
-                          const firstItem = formData.selectedItems[0] || { stockId: '', rate: 0, quantityUsed: 0, isJoint: true };
-                          const cleanRef = (formData as any).jointRef ? (formData as any).jointRef.trim().toUpperCase().replace('#', '') : '';
-                          const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
-                          
-                          const updatedItem = {
-                            ...firstItem,
-                            stockId: matchingJob?.items?.[0]?.stockId || firstItem.stockId || '',
-                            rate: firstItem.rate || matchingJob?.items?.[0]?.rate || 0,
-                            ups: val,
-                            isJoint: true,
-                            paperRef: (formData as any).jointRef || ''
-                          };
-                          
-                          // Auto calculate sheets if we have orderedQuantity and ups
-                          const ordered = Number(formData.orderedQuantity) || 0;
-                          const upsVal = Number(val) || 1;
-                          if (upsVal > 0 && ordered > 0) {
-                            const calculated = Math.ceil(ordered / upsVal);
-                            updatedItem.calculatedSheets = calculated;
-                            updatedItem.quantityUsed = calculated;
-                          }
-                          
-                          setFormData({
-                            ...formData,
-                            selectedItems: [updatedItem]
-                          });
-                        }}
-                        className="bg-white border-gray-200 h-10"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label htmlFor="edit-joint-sheets" className="text-xs font-bold text-gray-500 uppercase">Sheet Required</Label>
-                      <Input 
-                        id="edit-joint-sheets"
-                        type="number" 
-                        placeholder="e.g. 5000"
-                        value={formData.selectedItems[0]?.calculatedSheets || formData.selectedItems[0]?.quantityUsed || ''} 
-                        onChange={e => {
-                          const val = e.target.value === '' ? 0 : Number(e.target.value);
-                          const firstItem = formData.selectedItems[0] || { stockId: '', rate: 0, ups: undefined, isJoint: true };
-                          const cleanRef = (formData as any).jointRef ? (formData as any).jointRef.trim().toUpperCase().replace('#', '') : '';
-                          const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
-                          
-                          const updatedItem = {
-                            ...firstItem,
-                            stockId: matchingJob?.items?.[0]?.stockId || firstItem.stockId || '',
-                            rate: firstItem.rate || matchingJob?.items?.[0]?.rate || 0,
-                            calculatedSheets: val,
-                            quantityUsed: val,
-                            autoCalculate: false,
-                            isJoint: true,
-                            paperRef: (formData as any).jointRef || ''
-                          };
-                          
-                          setFormData({
-                            ...formData,
-                            selectedItems: [updatedItem]
-                          });
-                        }}
-                        className="bg-white border-gray-200 h-10"
-                        required
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label htmlFor="edit-joint-paper-rate" className="text-xs font-bold text-gray-500 uppercase">Paper Rate (₹)</Label>
-                      <Input 
-                        id="edit-joint-paper-rate"
-                        type="number" 
-                        step="any"
-                        placeholder="0.00"
-                        value={formData.selectedItems[0]?.rate === 0 ? '' : (formData.selectedItems[0]?.rate ?? '')} 
-                        onChange={e => {
-                          const val = e.target.value === '' ? 0 : Number(e.target.value);
-                          const firstItem = formData.selectedItems[0] || { stockId: '', rate: 0, quantityUsed: 0, isJoint: true };
-                          const updatedItem = {
-                            ...firstItem,
-                            rate: val,
-                            isJoint: true,
-                            paperRef: (formData as any).jointRef || ''
-                          };
-                          setFormData({
-                            ...formData,
-                            selectedItems: [updatedItem]
-                          });
-                        }}
-                        className="bg-white border-gray-200 h-10"
-                        required
-                      />
-                      {(() => {
-                        const rate = formData.selectedItems[0]?.rate || 0;
-                        const sheets = formData.selectedItems[0]?.calculatedSheets || formData.selectedItems[0]?.quantityUsed || 0;
-                        const ratePerSheet = rate / 500;
-                        const paperCost = (sheets / 500) * rate;
-                        if (rate > 0) {
-                          return (
-                            <p className="text-[11px] text-sky-800 font-mono mt-1">
-                              ≈ ₹{ratePerSheet.toFixed(4)}/sheet | Cost for {sheets.toLocaleString()} sheets: <strong className="font-bold">₹{paperCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</strong>
-                            </p>
-                          );
-                        }
-                        return null;
-                      })()}
-                    </div>
-                  </div>
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <Label className="text-lg font-serif">Papers Used</Label>
+                  <Button type="button" variant="outline" size="sm" onClick={handleAddItem} className="rounded-full">
+                    <Plus className="mr-1 h-3 w-3" /> Add Paper
+                  </Button>
                 </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex justify-between items-center">
-                    <Label className="text-lg font-serif">Papers Used</Label>
-                    <Button type="button" variant="outline" size="sm" onClick={handleAddItem} className="rounded-full">
-                      <Plus className="mr-1 h-3 w-3" /> Add Paper
-                    </Button>
-                  </div>
-                  
-                  {formData.selectedItems.map((item, index) => {
-                    const isAuto = !formData.isJoint ? false : (item.autoCalculate !== undefined ? item.autoCalculate : true);
-
-                    return (
-                      <div key={index} className="p-5 bg-white rounded-2xl border border-gray-200 shadow-sm space-y-4 relative">
-                        <div className="absolute top-4 right-4">
+                
+                {formData.selectedItems.map((item, index) => {
+                  const isLinkedJob = !!(formData.isJoint && formData.jointJobType === 'linked');
+                  return (
+                    <div key={index} className="p-5 bg-white rounded-2xl border border-gray-200 shadow-sm space-y-4 relative">
+                      <div className="absolute top-4 right-4 animate-fadeIn">
+                        {!isLinkedJob && (
                           <Button 
                             type="button" 
                             variant="ghost" 
@@ -3483,142 +3965,140 @@ if ((formData as any).isJoint) {
                           >
                             Remove Paper
                           </Button>
+                        )}
+                      </div>
+
+                      <h4 className="font-serif text-sm font-semibold text-gray-700">Paper Item #{index + 1}</h4>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                        {/* Paper Stock */}
+                        <div className="md:col-span-6 space-y-1.5">
+                          <Label className="text-xs font-bold text-gray-500 uppercase">Select Paper Stock</Label>
+                          {isLinkedJob ? (
+                            <Input 
+                              value={stocks.find(s => s.id === item.stockId)?.name || 'Matching Parent Stock'} 
+                              readOnly 
+                              className="bg-gray-100 border-gray-200 h-9 cursor-not-allowed text-gray-600 font-medium"
+                            />
+                          ) : (
+                            <StockSelect 
+                              value={item.stockId} 
+                              onValueChange={(v) => handleItemChange(index, 'stockId', v)}
+                              stocks={stocks}
+                              type="paper"
+                              placeholder="Choose paper..."
+                            />
+                          )}
                         </div>
 
-                        <h4 className="font-serif text-sm font-semibold text-gray-700">Paper Item #{index + 1}</h4>
-                        
-                        {!formData.isJoint ? (
-                          // Standard / Non-Joint Job Layout
-                          <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                            <div className="md:col-span-6 space-y-1.5">
-                              <Label className="text-xs font-bold text-gray-500 uppercase">Select Paper Stock</Label>
-                              <StockSelect 
-                                value={item.stockId} 
-                                onValueChange={(v) => handleItemChange(index, 'stockId', v)}
-                                stocks={stocks}
-                                type="paper"
-                                placeholder="Choose paper..."
-                              />
+                        {/* Matter Ups */}
+                        <div className="md:col-span-6 space-y-1.5">
+                          <Label className="text-xs font-bold text-gray-500 uppercase">Matter Ups</Label>
+                          <Input 
+                            type="number" 
+                            placeholder="e.g. 1"
+                            value={item.ups || ''} 
+                            onChange={e => handleItemChange(index, 'ups', e.target.value === '' ? undefined : Number(e.target.value))} 
+                            onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                            className="bg-gray-50 border-gray-200 h-9"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-2 border-t border-gray-100">
+                        {/* Total Sheets Used */}
+                        <div className="md:col-span-4 space-y-1.5">
+                          <Label className="text-xs font-bold text-gray-500 uppercase">
+                            {formData.isJoint ? "Total Sheets Used" : "Actual Sheets Used"}
+                          </Label>
+                          <Input 
+                            type="number" 
+                            value={item.quantityUsed === 0 ? '' : item.quantityUsed} 
+                            onChange={e => handleItemChange(index, 'quantityUsed', e.target.value === '' ? 0 : Number(e.target.value))} 
+                            onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                            required
+                            readOnly={isLinkedJob}
+                            placeholder={isLinkedJob ? "Linked from parent" : "sheets"}
+                            className={`${isLinkedJob ? "bg-gray-100 cursor-not-allowed text-gray-600 font-medium" : "bg-gray-50"} border-gray-200 h-9`}
+                          />
+                        </div>
+
+                        {/* Wastage Sheets */}
+                        <div className="md:col-span-4 space-y-1.5">
+                          <Label className="text-xs font-bold text-gray-500 uppercase">Wastage Sheets</Label>
+                          <Input 
+                            type="number" 
+                            value={item.wastageSheets === undefined ? 0 : item.wastageSheets} 
+                            onChange={e => handleItemChange(index, 'wastageSheets', e.target.value === '' ? 0 : Number(e.target.value))} 
+                            onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                            readOnly={isLinkedJob}
+                            placeholder={isLinkedJob ? "Linked from parent" : "sheets"}
+                            className={`${isLinkedJob ? "bg-gray-100 cursor-not-allowed text-gray-600 font-medium" : "bg-gray-50"} border-gray-200 h-9`}
+                          />
+                        </div>
+
+                        {/* Allocated Paper */}
+                        <div className="md:col-span-4 space-y-1.5">
+                          <Label className="text-xs font-bold text-gray-500 uppercase">Allocated Paper</Label>
+                          <Input 
+                            value={(item.allocatedPaper || 0).toLocaleString()}
+                            readOnly
+                            placeholder="Auto Calculated"
+                            className="bg-green-50 border-green-200 h-9 font-semibold text-green-700 cursor-default"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-2 border-t border-gray-100">
+                        {/* Paper Rate */}
+                        <div className="md:col-span-4 space-y-1.5">
+                          <Label className="text-xs font-bold text-gray-500 uppercase">Paper Rate (per sheet)</Label>
+                          <Input 
+                            type="number" 
+                            step="any"
+                            placeholder="e.g. 1.50" 
+                            value={item.paperRate || ''} 
+                            onChange={e => handleItemChange(index, 'paperRate', e.target.value === '' ? 0 : Number(e.target.value))} 
+                            onFocus={e => { if (e.target.value === '0') e.target.select(); }}
+                            readOnly={isLinkedJob}
+                            className={`${isLinkedJob ? "bg-gray-100 cursor-not-allowed text-gray-600 font-medium" : "bg-gray-50"} border-gray-200 h-9`}
+                          />
+                        </div>
+
+                        {/* Produced Quantity */}
+                        <div className="md:col-span-4 space-y-1.5">
+                          <Label className="text-xs font-bold text-gray-500 uppercase">Produced Quantity (Read Only)</Label>
+                          <Input 
+                            value={((item.quantityUsed || 0) * (item.ups || 1)).toLocaleString()}
+                            readOnly
+                            placeholder="Sheets × Ups"
+                            className="bg-blue-50 border-blue-200 h-9 font-semibold text-blue-700 cursor-default"
+                          />
+                        </div>
+
+                        {/* Estimated cost display */}
+                        <div className="md:col-span-4 flex flex-col justify-end">
+                          {item.stockId && (
+                            <div className="p-2 py-1.5 bg-gray-50 border border-gray-150 rounded-lg text-right h-9 flex items-center justify-between px-3 text-xs text-gray-600">
+                              <span className="font-medium">Total Paper Cost:</span>
+                              <span className="font-bold text-gray-900 font-mono">
+                                AED {((item.quantityUsed || 0) * (item.paperRate || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
                             </div>
-
-                            <div className="md:col-span-3 space-y-1.5">
-                              <Label className="text-xs font-bold text-gray-500 uppercase">Rate/500 shs (₹)</Label>
-                              <Input 
-                                type="number" 
-                                step="any"
-                                placeholder="0.00"
-                                value={item.rate === 0 ? '' : item.rate} 
-                                onChange={e => handleItemChange(index, 'rate', e.target.value === '' ? 0 : Number(e.target.value))} 
-                                onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                                required 
-                                className="bg-gray-50 border-gray-200 h-9"
-                              />
-                              {item.rate ? (
-                                <p className="text-[10px] text-sky-700 font-mono italic mt-0.5">
-                                  ≈ ₹{((item.rate || 0) / 500).toFixed(4)}/sheet
-                                </p>
-                              ) : null}
-                            </div>
-
-                            <div className="md:col-span-3 space-y-1.5">
-                              <Label className="text-xs font-bold text-gray-500 uppercase">Actual Sheets Used</Label>
-                              <Input 
-                                type="number" 
-                                value={item.quantityUsed === 0 ? '' : item.quantityUsed} 
-                                onChange={e => handleItemChange(index, 'quantityUsed', e.target.value === '' ? 0 : Number(e.target.value))} 
-                                onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                                required
-                                placeholder="sheets"
-                                className="bg-gray-50 border-gray-200 h-9"
-                              />
-                            </div>
-                          </div>
-                        ) : (
-                          // Joint Job Layout
-                          <>
-                            <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                              <div className="md:col-span-6 space-y-1.5">
-                                <Label className="text-xs font-bold text-gray-500 uppercase">Select Paper Stock</Label>
-                                <StockSelect 
-                                  value={item.stockId} 
-                                  onValueChange={(v) => handleItemChange(index, 'stockId', v)}
-                                  stocks={stocks}
-                                  type="paper"
-                                  placeholder="Choose paper..."
-                                />
-                              </div>
-
-                              <div className="md:col-span-3 space-y-1.5">
-                                <Label className="text-xs font-bold text-gray-500 uppercase">Rate/500 shs (₹)</Label>
-                                <Input 
-                                  type="number" 
-                                  step="any"
-                                  placeholder="0.00"
-                                  value={item.rate === 0 ? '' : item.rate} 
-                                  onChange={e => handleItemChange(index, 'rate', e.target.value === '' ? 0 : Number(e.target.value))} 
-                                  onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                                  required 
-                                  className="bg-gray-50 border-gray-200 h-9"
-                                />
-                                {item.rate ? (
-                                  <p className="text-[10px] text-sky-700 font-mono italic mt-0.5">
-                                    ≈ ₹{((item.rate || 0) / 500).toFixed(4)}/sheet
-                                  </p>
-                                ) : null}
-                              </div>
-
-                              <div className="md:col-span-3 space-y-1.5">
-                                <Label className="text-xs font-bold text-gray-500 uppercase">Matter Ups</Label>
-                                <Input 
-                                  type="number" 
-                                  placeholder="e.g. 4"
-                                  value={item.ups || ''} 
-                                  onChange={e => handleItemChange(index, 'ups', e.target.value === '' ? undefined : Number(e.target.value))} 
-                                  onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                                  className="bg-gray-50 border-gray-200 h-9"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-2 border-t border-gray-100 items-center">
-                              <div className="md:col-span-5 flex items-center gap-2">
-                                <input 
-                                  type="checkbox" 
-                                  id={`edit-calc-${index}`}
-                                  checked={isAuto}
-                                  onChange={e => handleItemChange(index, 'autoCalculate', e.target.checked)}
-                                  className="h-4 w-4 rounded border-gray-300 text-[#5A5A40] focus:ring-0 cursor-pointer"
-                                />
-                                <Label htmlFor={`edit-calc-${index}`} className="text-xs text-gray-600 font-semibold cursor-pointer select-none">Auto Calculate sheets required</Label>
-                              </div>
-
-                              <div className="md:col-span-4 space-y-1">
-                                <Label className="text-xs font-bold text-gray-500 uppercase">Actual Sheets Consumed</Label>
-                                <Input 
-                                  type="number" 
-                                  value={item.quantityUsed === 0 ? '' : item.quantityUsed} 
-                                  onChange={e => handleItemChange(index, 'quantityUsed', e.target.value === '' ? 0 : Number(e.target.value))} 
-                                  onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                                  required={!formData.isJoint}
-                                  placeholder="sheets"
-                                  className="bg-gray-50 border-gray-200 h-9"
-                                />
-                              </div>
-                            </div>
-                          </>
-                        )}
-                        {!!item.isJoint && item.paperRef && (
-                          <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 md:bg-amber-50/70 border border-amber-100 text-[11px] text-amber-800 rounded-lg">
-                            <span className="font-semibold font-mono bg-amber-200/60 px-1 py-0.5 rounded">Joint Job Reference: #{item.paperRef}</span>
-                            <span>(Actual paper sheets detected from the matched referenced job's stock)</span>
-                          </div>
-                        )}
-
-                                         </div>
-                    );
-                  })}
-                </div>
-              )}
+                          )}
+                        </div>
+                      </div>
+                      
+                      {isLinkedJob && item.paperRef && (
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 md:bg-amber-50/70 border border-amber-100 text-[11px] text-amber-800 rounded-lg animate-fadeIn">
+                          <span className="font-semibold font-mono bg-amber-200/60 px-1 py-0.5 rounded">Joint Job Reference: #{item.paperRef}</span>
+                          <span>(Paper Stock and Rate inherited automatically from Parent Master Job)</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
 
               <div className="space-y-4 pt-4 border-t border-gray-100">
                 <div className="flex justify-between items-center">
@@ -4222,6 +4702,52 @@ if ((formData as any).isJoint) {
               <Button variant="ghost" onClick={() => setIsClearConfirmOpen(false)} className="rounded-full" disabled={isClearing}>Cancel</Button>
               <Button variant="destructive" onClick={handleClearJobs} className="rounded-full px-8 font-serif" disabled={isClearing}>
                 {isClearing ? 'Clearing...' : 'Clear Jobs History'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {isAuditLogsOpen && (
+        <Dialog open={isAuditLogsOpen} onOpenChange={setIsAuditLogsOpen}>
+          <DialogContent className="sm:max-w-[700px] max-h-[85vh] overflow-y-auto rounded-[32px]">
+            <DialogHeader>
+              <DialogTitle className="text-xl font-serif text-[#5A5A40]">Joint Run Audit Logs</DialogTitle>
+            </DialogHeader>
+            <div className="mt-4 space-y-3">
+              {auditLogs.length === 0 ? (
+                <div className="py-8 text-center text-sm text-gray-400 font-serif italic">
+                  No joint run changes logged yet.
+                </div>
+              ) : (
+                <div className="divide-y divide-gray-100 max-h-[60vh] overflow-y-auto pr-2">
+                  {auditLogs.map((log) => (
+                    <div key={log.id} className="py-3 space-y-1">
+                      <div className="flex justify-between items-start text-xs">
+                        <div className="flex items-center gap-1.5 font-bold text-amber-800">
+                          <span className="bg-amber-150 text-amber-900 px-2 py-0.5 rounded-sm uppercase tracking-wide text-[9px] font-mono">
+                            {log.sharedRunId}
+                          </span>
+                          <span>{log.changedField}</span>
+                        </div>
+                        <span className="text-gray-450 font-mono text-[10px]">
+                          {format(new Date(log.timestamp), 'dd MMM yyyy, hh:mm a')}
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-600 font-medium leading-relaxed pl-1">
+                        Changed from <code className="bg-red-50 text-red-600 px-1 py-0.5 rounded font-mono text-[11px] break-all">{log.oldValue || 'none'}</code> to <code className="bg-emerald-50 text-emerald-700 px-1 py-0.5 rounded font-mono text-[11px] font-bold break-all">{log.newValue || 'none'}</code>
+                      </div>
+                      <div className="text-[10px] text-gray-400 pl-1">
+                        By: <span className="font-semibold text-gray-500">{log.userEmail}</span> • Affected Jobs: <span className="font-mono text-gray-500 font-semibold">{log.affectedJobs?.join(', ') || 'none'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsAuditLogsOpen(false)} className="rounded-full">
+                Close Audit Logs
               </Button>
             </DialogFooter>
           </DialogContent>
