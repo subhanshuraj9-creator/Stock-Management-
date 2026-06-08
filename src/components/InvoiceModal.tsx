@@ -196,6 +196,38 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
     const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
     return sum + (sheetsUsed * (item.paperRate || 0));
   }, 0);
+
+  // Use the saved paper billing amount if set, otherwise fallback to material total
+  const hasPaperBilling = !!job.paperBillingMethod;
+  
+  // Calculate billing qty based on allocated paper
+  const billingQty = (job.items || []).reduce((sum, item) => {
+    const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
+    return sum + sheetsUsed;
+  }, 0);
+
+  let paperBillingAmt = papersTotal;
+  if (hasPaperBilling) {
+    if (job.paperBillingMethod === 'custom') {
+      paperBillingAmt = job.paperBillingAmount || 0;
+    } else {
+      const rate = job.paperBillingRate || 0;
+      let calculated = 0;
+      switch (job.paperBillingMethod) {
+        case '100sheets':
+          calculated = (billingQty / 100) * rate;
+          break;
+        case 'gross':
+          calculated = (billingQty / 144) * rate;
+          break;
+        case 'ream':
+          calculated = (billingQty / 500) * rate;
+          break;
+      }
+      paperBillingAmt = Math.round(calculated * 100) / 100;
+    }
+  }
+
   const platesTotal = resolvedPlates.reduce((sum, plate) => sum + ((plate.count || 0) * (plate.rate || 0)), 0);
   const processesTotal = (job.processCharges || []).reduce((sum, pc) => sum + (pc.amount || 0), 0);
   
@@ -207,7 +239,9 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
     : 0;
   const laminationTotal = halfLaminationTotal + fullLaminationTotal;
 
-  const grandTotal = papersTotal + platesTotal + processesTotal + laminationTotal;
+  const additionalCharges = job.additionalCharges || 0;
+
+  const grandTotal = paperBillingAmt + platesTotal + processesTotal + laminationTotal + additionalCharges;
 
   const activeColor = ACCENT_COLORS[accentColor] || ACCENT_COLORS.original;
   const activeTheme = LAYOUT_THEMES[layoutTheme] || LAYOUT_THEMES.classic;
@@ -224,23 +258,79 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
     const activeColor = ACCENT_COLORS[accentColor] || ACCENT_COLORS.original;
     const activeTheme = LAYOUT_THEMES[layoutTheme] || LAYOUT_THEMES.classic;
 
-    const paperRows = job.items.map(item => {
+    const hasPaperBillingLocal = !!job.paperBillingMethod;
+    const paperRowsList = job.items.map(item => {
       const stock = stocks.find(s => s.id === item.stockId);
       const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
-      const totalCost = sheetsUsed * (item.paperRate || 0);
-      return `
-        <tr>
-          <td style="padding: 10px; border-bottom: 1px solid var(--border-color); font-size: 13px;">
-            <div style="font-weight: 600; color: #1a202c;">${stock?.name || 'Stock Material'}</div>
+
+      if (hasPaperBillingLocal) {
+        return `
+          <tr>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); font-size: 13px;">
+              <div style="font-weight: 650; color: #1a202c;">${stock?.name || 'Stock Material'}</div>
+              <div style="font-size: 11px; color: #718096; margin-top: 1px;">Allocated stock material</div>
+            </td>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace;">
+              ${sheetsUsed.toLocaleString()}
+            </td>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace; color: #a0aec0;">-</td>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace; color: #a0aec0;">-</td>
+          </tr>
+        `;
+      } else {
+        const totalCost = sheetsUsed * (item.paperRate || 0);
+        return `
+          <tr>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); font-size: 13px;">
+              <div style="font-weight: 600; color: #1a202c;">${stock?.name || 'Stock Material'}</div>
+            </td>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace;">
+              ${sheetsUsed.toLocaleString()}
+            </td>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace;">₹${(item.paperRate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-weight: bold; font-family: monospace;">₹${totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          </tr>
+        `;
+      }
+    }).join('');
+
+    // Append dedicated Paper Billing row if configured
+    let billingRowHtml = '';
+    if (hasPaperBillingLocal) {
+      const paperQty = (job.items || []).reduce((acc, item) => acc + (Number(item.allocatedPaper !== undefined ? item.allocatedPaper : item.quantityUsed) || 0), 0);
+      let billingDetailsLabel = '';
+      if (job.paperBillingMethod === 'custom') {
+        billingDetailsLabel = 'Custom Amount';
+      } else {
+        const methodLabels: Record<string, string> = {
+          ream: 'Reams',
+          '100sheets': '100 Sheets',
+          gross: 'Gross'
+        };
+        const label = methodLabels[job.paperBillingMethod!] || job.paperBillingMethod;
+        billingDetailsLabel = `${paperQty.toLocaleString()} sheets @ ₹${job.paperBillingRate} / ${label}`;
+      }
+
+      billingRowHtml = `
+        <tr style="background-color: var(--light-bg);">
+          <td style="padding: 10px; border-bottom: 1px solid var(--border-color); font-size: 13px; font-weight: bold;">
+            <div style="color: var(--primary);">Paper Billing summary</div>
+            <div style="font-size: 11px; font-weight: normal; color: #4a5568; margin-top: 2px;">Method: ${String(job.paperBillingMethod).toUpperCase()} (${billingDetailsLabel})</div>
+          </td>
+          <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace; font-weight: bold;">
+            ${paperQty.toLocaleString()}
           </td>
           <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace;">
-            ${sheetsUsed.toLocaleString()}
+            ₹${(job.paperBillingRate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
           </td>
-          <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace;">₹${(item.paperRate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-          <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-weight: bold; font-family: monospace;">₹${totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-weight: bold; font-family: monospace; color: var(--primary);">
+            ₹${(paperBillingAmt || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+          </td>
         </tr>
       `;
-    }).join('');
+    }
+
+    const paperRows = paperRowsList + billingRowHtml;
 
     const plateRows = resolvedPlates.map((plate, idx) => {
       const stock = stocks.find(s => s.id === plate.plateId);
@@ -538,8 +628,8 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
 
           <table class="totals-table">
             <tr>
-              <td>Paper Total:</td>
-              <td style="text-align: right; font-family: monospace;">₹${papersTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+              <td>Paper Billing:</td>
+              <td style="text-align: right; font-family: monospace;">₹${paperBillingAmt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
             </tr>
             <tr>
               <td>Plates Total:</td>
@@ -553,6 +643,12 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
             <tr>
               <td>Lamination Total:</td>
               <td style="text-align: right; font-family: monospace;">₹${laminationTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            </tr>
+            ` : ''}
+            ${additionalCharges > 0 ? `
+            <tr>
+              <td>Other Charges:</td>
+              <td style="text-align: right; font-family: monospace;">₹${additionalCharges.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
             </tr>
             ` : ''}
             <tr class="grand-total-row">
@@ -601,23 +697,79 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
     const activeColor = ACCENT_COLORS[accentColor] || ACCENT_COLORS.original;
     const activeTheme = LAYOUT_THEMES[layoutTheme] || LAYOUT_THEMES.classic;
 
-    const paperRows = job.items.map(item => {
+    const hasPaperBillingLocal = !!job.paperBillingMethod;
+    const paperRowsList = job.items.map(item => {
       const stock = stocks.find(s => s.id === item.stockId);
       const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
-      const totalCost = sheetsUsed * (item.paperRate || 0);
-      return `
-        <tr>
-          <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; font-size: 13.5px;">
-            <div style="font-weight: 600; color: #2d3748;">${stock?.name || 'Stock Material'}</div>
+
+      if (hasPaperBillingLocal) {
+        return `
+          <tr>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; font-size: 13.5px;">
+              <div style="font-weight: 650; color: #2d3748;">${stock?.name || 'Stock Material'}</div>
+              <div style="font-size: 11.5px; color: #718096; margin-top: 1px;">Allocated stock material</div>
+            </td>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#4a5568;">
+              ${sheetsUsed.toLocaleString()}
+            </td>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#cbd5e0;">-</td>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#cbd5e0;">-</td>
+          </tr>
+        `;
+      } else {
+        const totalCost = sheetsUsed * (item.paperRate || 0);
+        return `
+          <tr>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; font-size: 13.5px;">
+              <div style="font-weight: 600; color: #2d3748;">${stock?.name || 'Stock Material'}</div>
+            </td>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#4a5568;">
+              ${sheetsUsed.toLocaleString()}
+            </td>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#4a5568;">₹${(item.paperRate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-weight: bold; font-family: Menlo, Monaco, monospace; color:#1a202c;">₹${totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          </tr>
+        `;
+      }
+    }).join('');
+
+    // Append dedicated Paper Billing row if configured
+    let billingRowHtml = '';
+    if (hasPaperBillingLocal) {
+      const paperQty = (job.items || []).reduce((acc, item) => acc + (Number(item.allocatedPaper !== undefined ? item.allocatedPaper : item.quantityUsed) || 0), 0);
+      let billingDetailsLabel = '';
+      if (job.paperBillingMethod === 'custom') {
+        billingDetailsLabel = 'Custom Amount';
+      } else {
+        const methodLabels: Record<string, string> = {
+          ream: 'Reams',
+          '100sheets': '100 Sheets',
+          gross: 'Gross'
+        };
+        const label = methodLabels[job.paperBillingMethod!] || job.paperBillingMethod;
+        billingDetailsLabel = `${paperQty.toLocaleString()} sheets @ ₹${job.paperBillingRate} / ${label}`;
+      }
+
+      billingRowHtml = `
+        <tr style="background-color: var(--light-bg);">
+          <td style="padding: 12px; border-bottom: 1px solid var(--border-color); font-size: 13.5px; font-weight: bold;">
+            <div style="color: var(--primary);">Paper Billing summary</div>
+            <div style="font-size: 11.5px; font-weight: normal; color: #4a5568; margin-top: 2px;">Method: ${String(job.paperBillingMethod).toUpperCase()} (${billingDetailsLabel})</div>
           </td>
-          <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#4a5568;">
-            ${sheetsUsed.toLocaleString()}
+          <td style="padding: 12px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; font-weight: bold; color: #1a202c;">
+            ${paperQty.toLocaleString()}
           </td>
-          <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#4a5568;">₹${(item.paperRate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
-          <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-weight: bold; font-family: Menlo, Monaco, monospace; color:#1a202c;">₹${totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+          <td style="padding: 12px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color: #4a5568;">
+            ₹${(job.paperBillingRate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+          </td>
+          <td style="padding: 12px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13.5px; font-weight: bold; font-family: Menlo, Monaco, monospace; color: var(--primary);">
+            ₹${(paperBillingAmt || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+          </td>
         </tr>
       `;
-    }).join('');
+    }
+
+    const paperRows = paperRowsList + billingRowHtml;
 
     const plateRows = resolvedPlates.map((plate, idx) => {
       const stock = stocks.find(s => s.id === plate.plateId);
@@ -989,8 +1141,8 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
 
             <table class="summary-table">
               <tr>
-                <td>Paper cost total:</td>
-                <td style="text-align: right; font-family: Menlo, Monaco, monospace;">₹${papersTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                <td>Paper billing:</td>
+                <td style="text-align: right; font-family: Menlo, Monaco, monospace;">₹${paperBillingAmt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
               </tr>
               <tr>
                 <td>Plates cost total:</td>
@@ -1004,6 +1156,12 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
               <tr>
                 <td>Lamination total:</td>
                 <td style="text-align: right; font-family: Menlo, Monaco, monospace;">₹${laminationTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+              </tr>
+              ` : ''}
+              ${additionalCharges > 0 ? `
+              <tr>
+                <td>Other charges:</td>
+                <td style="text-align: right; font-family: Menlo, Monaco, monospace;">₹${additionalCharges.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
               </tr>
               ` : ''}
               <tr class="total-row">
@@ -1225,13 +1383,47 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                           {sheetsUsed.toLocaleString()} sheets (used/allocated)
                         </div>
                       </div>
-                      <div className="text-right">
-                        <span className="font-mono font-semibold text-gray-900">₹{totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-                        <div className="text-[10px] text-gray-400">@ ₹{(item.paperRate || 0).toLocaleString('en-IN')}</div>
-                      </div>
+                      {!hasPaperBilling && (
+                        <div className="text-right">
+                          <span className="font-mono font-semibold text-gray-900">₹{totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                          <div className="text-[10px] text-gray-400">@ ₹{(item.paperRate || 0).toLocaleString('en-IN')}</div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
+
+                {/* Unified Paper Billing Row inside item list if configured */}
+                {hasPaperBilling && (() => {
+                  const paperQty = (job.items || []).reduce((acc, item) => acc + (Number(item.allocatedPaper !== undefined ? item.allocatedPaper : item.quantityUsed) || 0), 0);
+                  let billingDetailsLabel = '';
+                  if (job.paperBillingMethod === 'custom') {
+                    billingDetailsLabel = 'Custom Amount';
+                  } else {
+                    const methodLabels: Record<string, string> = {
+                      ream: 'Reams',
+                      '100sheets': '100 Sheets',
+                      gross: 'Gross'
+                    };
+                    const label = methodLabels[job.paperBillingMethod!] || job.paperBillingMethod;
+                    billingDetailsLabel = `${paperQty.toLocaleString()} sheets @ ₹${job.paperBillingRate} / ${label}`;
+                  }
+                  return (
+                    <div className="flex justify-between items-start text-xs font-sans py-2 bg-amber-50/50 border-t border-dashed border-amber-200/50 rounded px-1.5 my-1.5">
+                      <div>
+                        <span className="font-bold text-[#5A5A40] flex items-center gap-1.5">
+                          Paper Billing Summary
+                        </span>
+                        <div className="text-[10px] text-gray-500 font-serif italic">
+                          Method: {job.paperBillingMethod?.toUpperCase()} ({billingDetailsLabel})
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <span className="font-mono font-bold text-[#5A5A40]">₹{(paperBillingAmt || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Plates used */}
                 {resolvedPlates.map((plate, idx) => {
@@ -1304,8 +1496,8 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
             {/* Calculations breakdown block */}
             <div className="border-t pt-4 flex flex-col items-end space-y-1.5 text-xs text-gray-600">
               <div className="flex justify-between w-[220px]">
-                <span>Paper Materials cost:</span>
-                <span className="font-mono font-medium">₹{papersTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                <span>{hasPaperBilling ? 'Paper Billing:' : 'Paper Materials cost:'}</span>
+                <span className="font-mono font-medium">₹{paperBillingAmt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between w-[220px]">
                 <span>Plates pre-press total:</span>
@@ -1319,6 +1511,12 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                 <div className="flex justify-between w-[220px]">
                   <span>Lamination total:</span>
                   <span className="font-mono font-medium">₹{laminationTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                </div>
+              )}
+              {additionalCharges > 0 && (
+                <div className="flex justify-between w-[220px]">
+                  <span>Other/Additional Charges:</span>
+                  <span className="font-mono font-medium">₹{additionalCharges.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                 </div>
               )}
               <div className="flex justify-between w-[220px] pt-2 border-t font-semibold text-gray-950 bg-gray-50 p-2 rounded-xl">

@@ -75,43 +75,50 @@ service cloud.firestore {
     }
 
     function isValidStock(data) {
-      return hasRequiredFields(data, ['name', 'quantity', 'type', 'lastUpdated']) &&
+      return hasRequiredFields(data, ['name', 'quantity', 'type']) &&
              hasOnlyAllowedFields(data, ['id', 'name', 'gsm', 'size', 'quantity', 'type', 'lastUpdated', 'inkContainers', 'defaultRate', 'paperType', 'unit', 'brand', 'millName', 'shade', 'notes']) &&
-             data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             data.name is string && data.name.size() >= 1 &&
              (!('id' in data) || data.id == null || data.id is string) &&
-             (!('gsm' in data) || data.gsm == null || data.gsm == "" || (data.gsm is number && data.gsm > 0)) &&
-             (!('size' in data) || data.size == null || (data.size is string && data.size.size() >= 0 && data.size.size() <= 100)) &&
-             data.quantity is number && data.quantity >= 0 &&
+             (!('gsm' in data) || data.gsm == null || data.gsm == "" || data.gsm is number || data.gsm is string) &&
+             (!('size' in data) || data.size == null || data.size is string) &&
+             data.quantity is number &&
              data.type in ['paper', 'board', 'ink', 'plate'] &&
              (!('inkContainers' in data) || (data.inkContainers is list)) &&
-             data.lastUpdated is number &&
-             (!('defaultRate' in data) || data.defaultRate == null || data.defaultRate == "" || (data.defaultRate is number && data.defaultRate >= 0)) &&
-             (!('paperType' in data) || data.paperType == null || (data.paperType is string && data.paperType.size() >= 0 && data.paperType.size() <= 100)) &&
-             (!('unit' in data) || data.unit == null || (data.unit is string && data.unit.size() >= 0 && data.unit.size() <= 100)) &&
-             (!('brand' in data) || data.brand == null || (data.brand is string && data.brand.size() >= 0 && data.brand.size() <= 100)) &&
-             (!('millName' in data) || data.millName == null || (data.millName is string && data.millName.size() >= 0 && data.millName.size() <= 100)) &&
-             (!('shade' in data) || data.shade == null || (data.shade is string && data.shade.size() >= 0 && data.shade.size() <= 100)) &&
-             (!('notes' in data) || data.notes == null || (data.notes is string && data.notes.size() >= 0 && data.notes.size() <= 2000));
+             (!('lastUpdated' in data) || data.lastUpdated is number) &&
+             (!('defaultRate' in data) || data.defaultRate == null || data.defaultRate == "" || data.defaultRate is number || data.defaultRate is string) &&
+             (!('paperType' in data) || data.paperType == null || data.paperType is string) &&
+             (!('unit' in data) || data.unit == null || data.unit is string) &&
+             (!('brand' in data) || data.brand == null || data.brand is string) &&
+             (!('millName' in data) || data.millName == null || data.millName is string) &&
+             (!('shade' in data) || data.shade == null || data.shade is string) &&
+             (!('notes' in data) || data.notes == null || data.notes is string);
     }
 
     function isValidJob(data) {
       return hasRequiredFields(data, ['clientName', 'jobDescription', 'date', 'items']) &&
-             hasOnlyAllowedFields(data, ['clientName', 'jobDescription', 'date', 'items', 'platesUsed', 'processCharges', 'orderedQuantity', 'dispatches', 'dispatchStatus', 'isJoint', 'jointRef', 'jointJobType', 'sharedRunId', 'jointParentId', 'previewImage', 'lamination', 'isRepeat', 'repeatRef']) &&
-             data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 100 &&
-             data.jobDescription is string && data.jobDescription.size() >= 1 && data.jobDescription.size() <= 1000 &&
+             hasOnlyAllowedFields(data, ['clientName', 'jobDescription', 'date', 'items', 'platesUsed', 'processCharges', 'orderedQuantity', 'dispatches', 'dispatchStatus', 'isJoint', 'jointRef', 'jointJobType', 'sharedRunId', 'jointParentId', 'previewImage', 'lamination', 'isRepeat', 'repeatRef', 'paperBillingMethod', 'paperBillingRate', 'paperBillingAmount', 'additionalCharges']) &&
+             data.clientName is string && data.clientName.size() >= 1 &&
+             data.jobDescription is string && data.jobDescription.size() >= 1 &&
              data.date is number &&
-             data.items is list && data.items.size() <= 50 &&
+             data.items is list &&
              (!('platesUsed' in data) || (data.platesUsed is list)) &&
              (!('processCharges' in data) || (data.processCharges is list)) &&
-             (!('orderedQuantity' in data) || (data.orderedQuantity is number && data.orderedQuantity >= 0)) &&
+             (!('orderedQuantity' in data) || data.orderedQuantity == null || (data.orderedQuantity is number && data.orderedQuantity >= 0)) &&
              (!('dispatches' in data) || (data.dispatches is list)) &&
-             (!('dispatchStatus' in data) || (data.dispatchStatus in ['pending', 'partial', 'completed'])) &&
-             (!('isJoint' in data) || (data.isJoint is bool)) &&
-             (!('jointRef' in data) || (data.jointRef is string)) &&
-             (!('isRepeat' in data) || (data.isRepeat is bool)) &&
-             (!('repeatRef' in data) || (data.repeatRef is string)) &&
-             (!('previewImage' in data) || (data.previewImage is string && data.previewImage.size() <= 1048576)) &&
-             (!('lamination' in data) || (data.lamination is map));
+             (!('dispatchStatus' in data) || data.dispatchStatus == null || (data.dispatchStatus in ['pending', 'partial', 'completed'])) &&
+             (!('isJoint' in data) || data.isJoint == null || (data.isJoint is bool)) &&
+             (!('jointRef' in data) || data.jointRef == null || (data.jointRef is string)) &&
+             (!('jointJobType' in data) || data.jointJobType == null || (data.jointJobType is string)) &&
+             (!('sharedRunId' in data) || data.sharedRunId == null || (data.sharedRunId is string)) &&
+             (!('jointParentId' in data) || data.jointParentId == null || (data.jointParentId is string)) &&
+             (!('isRepeat' in data) || data.isRepeat == null || (data.isRepeat is bool)) &&
+             (!('repeatRef' in data) || data.repeatRef == null || (data.repeatRef is string)) &&
+             (!('previewImage' in data) || data.previewImage == null || (data.previewImage is string)) &&
+             (!('lamination' in data) || data.lamination == null || (data.lamination is map)) &&
+             (!('paperBillingMethod' in data) || data.paperBillingMethod == null || data.paperBillingMethod in ['100sheets', 'gross', 'ream', 'custom', '']) &&
+             (!('paperBillingRate' in data) || data.paperBillingRate == null || data.paperBillingRate is number) &&
+             (!('paperBillingAmount' in data) || data.paperBillingAmount == null || data.paperBillingAmount is number) &&
+             (!('additionalCharges' in data) || data.additionalCharges == null || data.additionalCharges is number);
     }
 
     function isValidPayment(data) {

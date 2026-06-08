@@ -169,6 +169,310 @@ const StockSelect = ({
   );
 };
 
+interface BillingSectionProps {
+  formData: any;
+  setFormData: React.Dispatch<React.SetStateAction<any>>;
+  rawJobs: Job[];
+  getPaperQuantityForBilling: (tempForm: any, allJobs: any[]) => number;
+  calculatePaperBillingAmount: (method: string, rate: number, qty: number) => number;
+  stocks: StockItem[];
+  recalculateAllocatedPapersForForm: (tempFormData: any, allJobs: any[]) => any[];
+}
+
+const BillingSection = ({
+  formData,
+  setFormData,
+  rawJobs,
+  getPaperQuantityForBilling,
+  calculatePaperBillingAmount,
+  stocks,
+  recalculateAllocatedPapersForForm
+}: BillingSectionProps) => {
+  const paperQty = getPaperQuantityForBilling(formData, rawJobs);
+  const paperMethod = formData.paperBillingMethod;
+  const paperRate = Number(formData.paperBillingRate) || 0;
+
+  // Calculate paper stock costs from the Papers Used list
+  const paperStockCost = useMemo(() => {
+    const resolvedItems = recalculateAllocatedPapersForForm(formData, rawJobs);
+    return resolvedItems.reduce((sum: number, item: any) => {
+      const qty = item.allocatedPaper !== undefined ? item.allocatedPaper : (Number(item.quantityUsed) || 0);
+      const rate = Number(item.paperRate) || 0;
+      return sum + (qty * rate);
+    }, 0);
+  }, [formData.selectedItems, rawJobs, recalculateAllocatedPapersForForm]);
+
+  // Sync / Calculate billing amount live
+  const calculatedPaperAmt = useMemo(() => {
+    if (paperMethod === 'custom') {
+      return Number(formData.paperBillingAmount) || 0;
+    }
+    return calculatePaperBillingAmount(paperMethod, paperRate, paperQty);
+  }, [paperMethod, paperRate, paperQty, formData.paperBillingAmount, calculatePaperBillingAmount]);
+
+  // Plate summation:
+  const plateBreakdown = useMemo(() => {
+    let sharedPlatesCount = 0;
+    let sharedPlatesBilling = 0;
+    let additionalPlatesCount = 0;
+    let additionalPlatesBilling = 0;
+    let standardPlatesCount = 0;
+    let standardPlatesBilling = 0;
+
+    formData.platesUsed.forEach((p: any) => {
+      const rate = Number(p.rate) || 0;
+      const count = Number(p.count) || 0;
+      const isShared = !!p.isJoint;
+      const isAdditional = !!p.isAdditionalPlate;
+
+      if (isShared) {
+        sharedPlatesCount += count;
+        sharedPlatesBilling += rate * count;
+      } else if (isAdditional) {
+        additionalPlatesCount += count;
+        additionalPlatesBilling += rate * count;
+      } else {
+        standardPlatesCount += count;
+        standardPlatesBilling += rate * count;
+      }
+    });
+
+    const totalPlateBilling = sharedPlatesBilling + additionalPlatesBilling + standardPlatesBilling;
+    return {
+      sharedPlatesCount,
+      sharedPlatesBilling,
+      additionalPlatesCount,
+      additionalPlatesBilling,
+      standardPlatesCount,
+      standardPlatesBilling,
+      totalPlateBilling
+    };
+  }, [formData.platesUsed]);
+
+  // Process Charges:
+  const totalProcessCharges = useMemo(() => {
+    return formData.processCharges.reduce((sum: number, pc: any) => {
+      if (!formData.isJoint && (pc.id === 'cutting' || pc.id === 'folding')) {
+        return sum;
+      }
+      return sum + (Number(pc.amount) || 0);
+    }, 0);
+  }, [formData.processCharges, formData.isJoint]);
+
+  // Lamination charges:
+  const lamiDetails = useMemo(() => {
+    const halfLami = formData.lamination?.halfEnabled ? (Number(formData.lamination.halfQty || 0) * Number(formData.lamination.halfRate || 0)) : 0;
+    const fullLami = formData.lamination?.fullEnabled ? (Number(formData.lamination.fullQty || 0) * Number(formData.lamination.fullRate || 0)) : 0;
+    const totalLami = halfLami + fullLami;
+    return { halfLami, fullLami, totalLami };
+  }, [formData.lamination]);
+
+  // Other/Additional Charges:
+  const otherCharges = Number(formData.additionalCharges) || 0;
+
+  // Total value:
+  const totalJobValue = calculatedPaperAmt + plateBreakdown.totalPlateBilling + totalProcessCharges + lamiDetails.totalLami + otherCharges;
+
+  return (
+    <div className="space-y-6 pt-4 border-t border-gray-100">
+      <div>
+        <Label className="text-lg font-serif text-gray-900 block mb-3">Billing & Customer Rates</Label>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-gray-50/50 rounded-2xl border border-gray-100 shadow-xs">
+          <div className="space-y-2">
+            <Label className="text-xs font-semibold text-gray-700">Paper Billing Rate Type</Label>
+            <Select 
+              value={paperMethod || 'none'} 
+              onValueChange={(val) => {
+                const methodVal = val === 'none' ? '' : val;
+                setFormData((prev: any) => {
+                  const updated = { 
+                    ...prev, 
+                    paperBillingMethod: methodVal
+                  };
+                  if (methodVal !== 'custom') {
+                    const qty = getPaperQuantityForBilling(updated, rawJobs);
+                    const calculatedAmt = calculatePaperBillingAmount(methodVal, Number(updated.paperBillingRate) || 0, qty);
+                    updated.paperBillingAmount = calculatedAmt;
+                  }
+                  return updated;
+                });
+              }}
+            >
+              <SelectTrigger className="w-full bg-white border-gray-200 h-10 rounded-xl text-xs focus:ring-[#5A5A40]">
+                <SelectValue placeholder="Select billing model" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="none">No Billing (None)</SelectItem>
+                  <SelectItem value="ream">Per Ream (500 sheets)</SelectItem>
+                  <SelectItem value="100sheets">Per 100 Sheets</SelectItem>
+                  <SelectItem value="gross">Per Gross (144 sheets)</SelectItem>
+                  <SelectItem value="custom">Custom Flat Amount</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-xs font-semibold text-gray-700">
+              {paperMethod === 'custom' ? 'Billing Rate Note / Reference' : 'Paper Billing Rate (₹)'}
+            </Label>
+            <Input 
+              type={paperMethod === 'custom' ? 'text' : 'number'}
+              step="any"
+              disabled={!paperMethod}
+              placeholder={!paperMethod ? 'N/A' : 'Rate (₹)'}
+              value={paperMethod ? (formData.paperBillingRate === 0 && paperMethod !== 'custom' ? '' : formData.paperBillingRate) : ''}
+              onChange={e => {
+                const val = e.target.value;
+                setFormData((prev: any) => {
+                  const updated = {
+                    ...prev,
+                    paperBillingRate: val === '' ? 0 : paperMethod === 'custom' ? val : Number(val)
+                  };
+                  if (paperMethod !== 'custom') {
+                    const qty = getPaperQuantityForBilling(updated, rawJobs);
+                    const calculatedAmt = calculatePaperBillingAmount(updated.paperBillingMethod, Number(updated.paperBillingRate) || 0, qty);
+                    updated.paperBillingAmount = calculatedAmt;
+                  }
+                  return updated;
+                });
+              }}
+              className="bg-white focus-visible:ring-[#5A5A40]"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-xs font-semibold text-gray-700">Paper Billing Amount (₹)</Label>
+            <Input 
+              type="number"
+              step="any"
+              disabled={paperMethod !== 'custom'}
+              readOnly={paperMethod !== 'custom'}
+              placeholder="0.00"
+              value={paperMethod ? (formData.paperBillingAmount === 0 ? '' : formData.paperBillingAmount) : ''}
+              onChange={e => {
+                if (paperMethod === 'custom') {
+                  const val = e.target.value === '' ? 0 : Number(e.target.value);
+                  setFormData((prev: any) => ({
+                    ...prev,
+                    paperBillingAmount: val
+                  }));
+                }
+              }}
+              className={paperMethod !== 'custom' ? 'bg-gray-100 font-mono text-gray-500' : 'bg-white font-mono text-gray-900 focus-visible:ring-[#5A5A40]'}
+            />
+            {paperMethod && paperMethod !== 'custom' && (
+              <p className="text-[10px] text-gray-400 font-serif italic">
+                Auto-calculated from {paperQty} sheets
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-xs font-semibold text-gray-700">Additional / Other Charges (₹)</Label>
+            <Input 
+              type="number"
+              step="any"
+              placeholder="e.g. Loading, freight (₹)"
+              value={formData.additionalCharges === 0 ? '' : formData.additionalCharges}
+              onChange={e => {
+                const val = e.target.value === '' ? 0 : Number(e.target.value);
+                setFormData((prev: any) => ({
+                  ...prev,
+                  additionalCharges: val
+                }));
+              }}
+              className="bg-white font-mono focus-visible:ring-[#5A5A40]"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Live Billing Summary Card */}
+      <div className="p-5 bg-gray-50 rounded-2xl border border-gray-150 space-y-4">
+        <div className="flex items-center justify-between border-b border-gray-200/60 pb-2">
+          <span className="text-xs font-bold text-[#5A5A40] uppercase tracking-wider">Live Job Value Estimation</span>
+          <Badge className="bg-[#5A5A40]/10 text-[#5A5A40] hover:bg-[#5A5A40]/10 text-[9px] font-mono border-none uppercase">Preview Only</Badge>
+        </div>
+        
+        <div className="space-y-2.5 text-xs font-medium text-gray-600">
+          
+          <div className="flex justify-between items-center">
+            <span>Paper Billing {paperMethod ? (paperMethod === 'custom' ? '(Custom Amount)' : `(${paperQty} Sheets @ ${paperMethod === 'ream' ? `₹${paperRate}/ream` : paperMethod === '100sheets' ? `₹${paperRate}/100 sheets` : `₹${paperRate}/gross`})`) : ''}:</span>
+            <span className="font-mono font-semibold text-gray-900">
+              ₹ {calculatedPaperAmt.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+          
+          <div className="flex flex-col gap-1 py-1 px-2.5 bg-white/40 rounded-xl border border-gray-100">
+            {formData.isJoint && (
+              <div className="flex justify-between items-center text-[10px] text-gray-500">
+                <span>• Shared Plates count ({plateBreakdown.sharedPlatesCount}):</span>
+                <span className="font-mono">₹ {plateBreakdown.sharedPlatesBilling.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+            )}
+            <div className="flex justify-between items-center text-[10px] text-gray-500">
+              <span>• Additional Plates count ({plateBreakdown.additionalPlatesCount}):</span>
+              <span className="font-mono">₹ {plateBreakdown.additionalPlatesBilling.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            {plateBreakdown.standardPlatesCount > 0 && (
+              <div className="flex justify-between items-center text-[10px] text-gray-500">
+                <span>• Standard Plates count ({plateBreakdown.standardPlatesCount}):</span>
+                <span className="font-mono">₹ {plateBreakdown.standardPlatesBilling.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+            )}
+            <div className="flex justify-between items-center pt-0.5 mt-0.5 border-t border-gray-100 text-gray-700 font-semibold text-[11px]">
+              <span>Total Plate Billing:</span>
+              <span className="font-mono">₹ {plateBreakdown.totalPlateBilling.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+          </div>
+          
+          <div className="flex justify-between items-center">
+            <span>Process Charges:</span>
+            <span className="font-mono font-semibold text-gray-900 font-sans">
+              ₹ {totalProcessCharges.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+          
+          <div className="flex flex-col gap-1 py-1 px-2.5 bg-white/40 rounded-xl border border-gray-100">
+            {formData.lamination?.halfEnabled && (
+              <div className="flex justify-between items-center text-[10px] text-gray-500">
+                <span>• Half Lamination ({formData.lamination.halfQty || 0} units):</span>
+                <span className="font-mono">₹ {lamiDetails.halfLami.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+            )}
+            {formData.lamination?.fullEnabled && (
+              <div className="flex justify-between items-center text-[10px] text-gray-500">
+                <span>• Full Lamination ({formData.lamination.fullQty || 0} units):</span>
+                <span className="font-mono">₹ {lamiDetails.fullLami.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+            )}
+            <div className="flex justify-between items-center pt-0.5 mt-0.5 border-t border-gray-100 text-gray-700 font-semibold text-[11px]">
+              <span>Total Lamination:</span>
+              <span className="font-mono">₹ {lamiDetails.totalLami.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+          </div>
+
+          <div className="flex justify-between items-center pb-1">
+            <span>Other Charges:</span>
+            <span className="font-mono font-semibold text-gray-900 font-sans">
+              ₹ {otherCharges.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
+        </div>
+        
+        <div className="bg-[#5A5A40]/5 rounded-xl p-4 border border-[#5A5A40]/10 flex flex-col items-center justify-center gap-1">
+          <span className="text-[10px] font-bold text-[#5A5A40] uppercase tracking-wider">Estimated Job Value</span>
+          <span className="text-2xl md:text-3xl font-serif font-extrabold text-[#5A5A40] font-sans">
+            ₹ {totalJobValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const getInitialProcessCharges = () => [
   { id: 'printing', name: 'Printing', amount: 0, notes: '' },
   { id: 'cutting', name: 'Cutting', amount: 0, notes: '' },
@@ -274,7 +578,8 @@ export function JobManagement() {
     date: new Date().toISOString().split('T')[0],
     paperBillingMethod: '' as '100sheets' | 'gross' | 'ream' | 'custom' | '',
     paperBillingRate: 0,
-    paperBillingAmount: 0
+    paperBillingAmount: 0,
+    additionalCharges: 0
   });
 
   function getJobRunId(job: any): string {
@@ -290,7 +595,50 @@ export function JobManagement() {
     return '';
   }
 
-  function synchronizeJobsData(allJobs: any[], allJointRuns: JointRun[] = jointRuns): any[] {
+  function synchronizeJobsData(
+    allJobs: any[], 
+    allJointRuns: JointRun[] = jointRuns,
+    editingId?: string,
+    editingFormData?: any
+  ): any[] {
+    let finalJointRuns = [...allJointRuns];
+
+    if (editingId && editingFormData && editingFormData.isJoint && editingFormData.jointJobType === 'master') {
+      const runId = editingFormData.sharedRunId || editingFormData.jointRef || "XXXX";
+      const paperStockId = editingFormData.selectedItems?.[0]?.stockId || '';
+      const paperItemFromStock = stocks.find(s => s.id === paperStockId);
+
+      const virtualJr: JointRun = {
+        id: runId,
+        sharedRunId: runId,
+        paper: {
+          stockId: paperStockId,
+          paperSize: editingFormData.paperSize || paperItemFromStock?.size || '',
+          paperSection: editingFormData.paperSection || paperItemFromStock?.paperType || '',
+          paperNotes: editingFormData.paperNotes || '',
+          productionNotes: editingFormData.productionNotes || '',
+          paperRate: editingFormData.selectedItems?.[0]?.paperRate || 0
+        },
+        totalSheetsUsed: Number(editingFormData.selectedItems?.[0]?.quantityUsed) || 0,
+        wastageSheets: Number(editingFormData.selectedItems?.[0]?.wastageSheets) || 0,
+        sharedPlates: (editingFormData.platesUsed || []).filter((p: any) => p.isJoint).map((p: any) => ({
+          plateId: p.plateId,
+          count: Number(p.count),
+          rate: Number(p.rate) || 0,
+          isJoint: true,
+          plateRef: runId
+        })),
+        linkedJobs: []
+      };
+
+      const idx = finalJointRuns.findIndex(r => r.sharedRunId === runId);
+      if (idx !== -1) {
+        finalJointRuns[idx] = virtualJr;
+      } else {
+        finalJointRuns.push(virtualJr);
+      }
+    }
+
     // 1. Resolve paper/rate copy & alignment across groups based on JointRuns first
     const jobsWithResolvedJoints = allJobs.map(job => {
       const resolvedJob = {
@@ -301,7 +649,7 @@ export function JobManagement() {
 
       if (resolvedJob.isJoint && resolvedJob.sharedRunId) {
         // Find JointRun
-        const jr = allJointRuns.find(r => r.sharedRunId === resolvedJob.sharedRunId);
+        const jr = finalJointRuns.find(r => r.sharedRunId === resolvedJob.sharedRunId);
         if (jr) {
           // Merge Paper Stock, Total Sheets Used, Wastage Sheets, Size, Section, Notes
           resolvedJob.items = (resolvedJob.items || []).map((it: any) => {
@@ -362,7 +710,7 @@ export function JobManagement() {
 
     // For any group, if there is no matching JointRun, we do the fallback in-memory synchronization
     runIdToGroupJobs.forEach((group, runId) => {
-      const hasRealRun = allJointRuns.some(r => r.sharedRunId === runId);
+      const hasRealRun = finalJointRuns.some(r => r.sharedRunId === runId);
       if (!hasRealRun) {
         const masterJob = group.find(j => j.jointJobType === 'master') || 
                           group.find(j => j.id && j.id.slice(-4).toUpperCase() === runId) ||
@@ -449,10 +797,10 @@ export function JobManagement() {
     });
 
     return jobsWithResolvedJoints;
-  };
+  }
 
   const recalculateAllocatedPapersForForm = (tempFormData: any, allJobs: any[]): JobItem[] => {
-    const currentId = tempFormData.id || "TEMP_EDIT_JOB_ID_XXXX";
+    const currentId = tempFormData.id || (editingJob ? editingJob.id : undefined) || "TEMP_EDIT_JOB_ID_XXXX";
     const withTempJob = [{ 
       ...tempFormData, 
       id: currentId,
@@ -464,12 +812,12 @@ export function JobManagement() {
     }];
     
     allJobs.forEach(job => {
-      if (job.id !== tempFormData.id) {
+      if (job.id !== currentId) {
         withTempJob.push(job);
       }
     });
 
-    const synchronized = synchronizeJobsData(withTempJob, jointRuns);
+    const synchronized = synchronizeJobsData(withTempJob, jointRuns, currentId, tempFormData);
     const resolvedTempJob = synchronized.find(j => j.id === currentId);
     return resolvedTempJob?.items || tempFormData.selectedItems || [];
   };
@@ -477,11 +825,8 @@ export function JobManagement() {
   const getPaperQuantityForBilling = (tempForm: any, allJobs: any[]): number => {
     const resolvedItems = recalculateAllocatedPapersForForm(tempForm, allJobs);
     return resolvedItems.reduce((sum, item) => {
-      if (tempForm.isJoint) {
-        return sum + (item.allocatedPaper || 0);
-      } else {
-        return sum + (Number(item.quantityUsed) || 0);
-      }
+      const qty = item.allocatedPaper !== undefined ? item.allocatedPaper : (Number(item.quantityUsed) || 0);
+      return sum + qty;
     }, 0);
   };
 
@@ -529,8 +874,12 @@ export function JobManagement() {
     formData.paperBillingMethod,
     formData.paperBillingRate,
     formData.isJoint,
+    formData.jointJobType,
+    formData.sharedRunId,
+    formData.jointRef,
     JSON.stringify(formData.selectedItems),
-    rawJobs.length
+    rawJobs.length,
+    JSON.stringify(jointRuns)
   ]);
 
   useEffect(() => {
@@ -1393,14 +1742,15 @@ export function JobManagement() {
           repeatRef: formData.isRepeat ? (formData.repeatRef || '') : '',
           paperBillingMethod: formData.paperBillingMethod || '',
           paperBillingRate: Number(formData.paperBillingRate) || 0,
-          paperBillingAmount: Number(formData.paperBillingAmount) || 0
+          paperBillingAmount: Number(formData.paperBillingAmount) || 0,
+          additionalCharges: Number(formData.additionalCharges) || 0
         };
 
         transaction.set(newJobDoc, cleanUndefined(jobDataToSave));
       });
 
       setIsAddOpen(false);
-      setFormData({ clientName: '', jobDescription: '', selectedItems: getInitialSelectedItems(), platesUsed: getInitialPlatesUsed(), processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointJobType: '', sharedRunId: '', jointParentId: '', jointRef: '', isRepeat: false, repeatRef: '', date: new Date().toISOString().split('T')[0], paperBillingMethod: '', paperBillingRate: 0, paperBillingAmount: 0 } as any);
+      setFormData({ clientName: '', jobDescription: '', selectedItems: getInitialSelectedItems(), platesUsed: getInitialPlatesUsed(), processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointJobType: '', sharedRunId: '', jointParentId: '', jointRef: '', isRepeat: false, repeatRef: '', date: new Date().toISOString().split('T')[0], paperBillingMethod: '', paperBillingRate: 0, paperBillingAmount: 0, additionalCharges: 0 } as any);
       toast.success('Job created and stock updated successfully');
     } catch (error: any) {
       toast.error(error.message || 'Failed to create job');
@@ -1549,7 +1899,7 @@ export function JobManagement() {
         const stockItem = stocks.find(s => s.id === item.stockId);
         if (stockItem) {
           const unitLabel = stockItem.type === 'ink' ? 'kg' : stockItem.type === 'plate' ? 'units' : 'sheets';
-          materialsUsed.push(`${stockItem.name}: ${item.quantityUsed.toLocaleString()} ${unitLabel}`);
+          materialsUsed.push(`${stockItem.name}: ${(item.quantityUsed ?? 0).toLocaleString()} ${unitLabel}`);
         }
       });
     }
@@ -2075,14 +2425,15 @@ export function JobManagement() {
           date: formData.date ? new Date(formData.date).getTime() : Date.now(),
           paperBillingMethod: formData.paperBillingMethod || '',
           paperBillingRate: Number(formData.paperBillingRate) || 0,
-          paperBillingAmount: Number(formData.paperBillingAmount) || 0
+          paperBillingAmount: Number(formData.paperBillingAmount) || 0,
+          additionalCharges: Number(formData.additionalCharges) || 0
         };
 
         transaction.update(doc(db, 'jobs', editingJob.id), cleanUndefined(jobDataToSave) as any);
       });
 
       setEditingJob(null);
-      setFormData({ clientName: '', jobDescription: '', selectedItems: getInitialSelectedItems(), platesUsed: getInitialPlatesUsed(), processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointJobType: '', sharedRunId: '', jointParentId: '', jointRef: '', isRepeat: false, repeatRef: '', date: new Date().toISOString().split('T')[0], paperBillingMethod: '', paperBillingRate: 0, paperBillingAmount: 0 } as any);
+      setFormData({ clientName: '', jobDescription: '', selectedItems: getInitialSelectedItems(), platesUsed: getInitialPlatesUsed(), processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointJobType: '', sharedRunId: '', jointParentId: '', jointRef: '', isRepeat: false, repeatRef: '', date: new Date().toISOString().split('T')[0], paperBillingMethod: '', paperBillingRate: 0, paperBillingAmount: 0, additionalCharges: 0 } as any);
       toast.success('Job updated successfully');
     } catch (error: any) {
       toast.error(error.message || 'Failed to update job');
@@ -2138,7 +2489,8 @@ export function JobManagement() {
               repeatRef: '',
               paperBillingMethod: '',
               paperBillingRate: 0,
-              paperBillingAmount: 0
+              paperBillingAmount: 0,
+              additionalCharges: 0
             } as any);
           }
         }}>
@@ -2152,6 +2504,7 @@ export function JobManagement() {
               <DialogTitle>Create New Job</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleAddJob} className="space-y-6 py-4">
+              {/* UNIQUE_ADD_FORM_MARKER */}
               <div className="space-y-4">
                 <div className="flex justify-between items-center px-1">
                   <span className="text-xs text-gray-400 font-medium font-mono uppercase tracking-widest">Job Setup</span>
@@ -2183,25 +2536,6 @@ export function JobManagement() {
                     </Label>
                     <Input id="jobDescription" value={formData.jobDescription} onChange={e => setFormData({...formData, jobDescription: e.target.value})} required className="bg-white border-gray-200" />
                   </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="orderedQuantity" className="flex items-center gap-1 text-sm font-semibold text-gray-700">
-                    <span>{formData.isJoint ? "Produced Finished Product Quantity (Read-only for Joint Jobs)" : "Ordered Finished Product Quantity"}</span>
-                  </Label>
-                  <Input 
-                    id="orderedQuantity" 
-                    type="number" 
-                    placeholder={formData.isJoint ? "Total Sheets Used × Matter Ups" : "e.g. 10000"} 
-                    value={formData.orderedQuantity} 
-                    onChange={e => handleOrderedQuantityChange(e.target.value)} 
-                    readOnly={formData.isJoint}
-                    className={formData.isJoint ? "bg-amber-50 border-amber-200 text-amber-900 font-bold cursor-default" : "bg-white border-gray-200"}
-                  />
-                  {formData.isJoint && (
-                    <p className="text-[11px] text-amber-700 font-medium font-sans">
-                      Note: Joint runs automatically calculate and set this value based on <strong>Total Sheets Used × Matter Ups</strong>.
-                    </p>
-                  )}
                 </div>
                 <div className="space-y-3 p-4 bg-gray-50 rounded-2xl border border-gray-200 mt-3 shadow-xs">
                   <Label className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">Job Link Workflow / Relationship</Label>
@@ -2450,7 +2784,7 @@ export function JobManagement() {
                   </Button>
                 </div>
                 
-                {formData.selectedItems.map((item, index) => {
+                {formData.selectedItems.map((item, index) => { /* ADD_FORM_EXCLUSIVE */
                   const isLinkedJob = !!(formData.isJoint && formData.jointJobType === 'linked');
                   return (
                     <div key={index} className="p-5 bg-white rounded-2xl border border-gray-200 shadow-sm space-y-4 relative">
@@ -2550,42 +2884,15 @@ export function JobManagement() {
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-2 border-t border-gray-100">
-                        {/* Paper Rate */}
-                        <div className="md:col-span-4 space-y-1.5">
-                          <Label className="text-xs font-bold text-gray-500 uppercase">Paper Rate (per sheet)</Label>
-                          <Input 
-                            type="number" 
-                            step="any"
-                            placeholder="e.g. 1.50" 
-                            value={item.paperRate || ''} 
-                            onChange={e => handleItemChange(index, 'paperRate', e.target.value === '' ? 0 : Number(e.target.value))} 
-                            onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                            readOnly={isLinkedJob}
-                            className={`${isLinkedJob ? "bg-gray-100 cursor-not-allowed text-gray-600 font-medium" : "bg-gray-50"} border-gray-200 h-9`}
-                          />
-                        </div>
-
                         {/* Produced Quantity */}
-                        <div className="md:col-span-4 space-y-1.5">
+                        <div className="md:col-span-12 space-y-1.5">
                           <Label className="text-xs font-bold text-gray-500 uppercase">Produced Quantity (Read Only)</Label>
                           <Input 
-                            value={((item.quantityUsed || 0) * (item.ups || 1)).toLocaleString()}
+                            value={((item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0)) * (item.ups || 1)).toLocaleString()}
                             readOnly
                             placeholder="Sheets × Ups"
                             className="bg-blue-50 border-blue-200 h-9 font-semibold text-blue-700 cursor-default"
                           />
-                        </div>
-
-                        {/* Estimated cost display */}
-                        <div className="md:col-span-4 flex flex-col justify-end">
-                          {item.stockId && (
-                            <div className="p-2 py-1.5 bg-gray-50 border border-gray-150 rounded-lg text-right h-9 flex items-center justify-between px-3 text-xs text-gray-600">
-                              <span className="font-medium">Total Paper Cost:</span>
-                              <span className="font-bold text-gray-900 font-mono">
-                                AED {((item.quantityUsed || 0) * (item.paperRate || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </span>
-                            </div>
-                          )}
                         </div>
                       </div>
                       
@@ -2912,6 +3219,9 @@ export function JobManagement() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {formData.processCharges.map((pc) => {
                     const isStandard = ['printing', 'cutting', 'folding', 'binding'].includes(pc.id);
+                    if (!formData.isJoint && (pc.id === 'cutting' || pc.id === 'folding')) {
+                      return null;
+                    }
                     return (
                       <div key={pc.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col gap-2 relative">
                         <div className="flex items-center justify-between gap-1.5">
@@ -2971,6 +3281,16 @@ export function JobManagement() {
                   })}
                 </div>
               </div>
+
+              <BillingSection 
+                formData={formData} 
+                setFormData={setFormData}
+                rawJobs={rawJobs}
+                getPaperQuantityForBilling={getPaperQuantityForBilling}
+                calculatePaperBillingAmount={calculatePaperBillingAmount}
+                stocks={stocks}
+                recalculateAllocatedPapersForForm={recalculateAllocatedPapersForForm}
+              />
 
               <DialogFooter>
                 <Button type="submit" className="bg-[#5A5A40] hover:bg-[#4A4A30] w-full h-12 rounded-full text-lg">
@@ -3167,8 +3487,9 @@ export function JobManagement() {
                             date: job.date ? format(new Date(job.date), 'yyyy-MM-dd') : new Date().toISOString().split('T')[0],
                             paperBillingMethod: job.paperBillingMethod || '',
                             paperBillingRate: job.paperBillingRate || 0,
-                            paperBillingAmount: job.paperBillingAmount || 0
-                          } as any);
+                            paperBillingAmount: job.paperBillingAmount || 0,
+                            additionalCharges: job.additionalCharges || 0
+                           } as any);
                         }}
                       >
                         <Edit2 size={14} className="mr-1" /> Edit
@@ -3266,7 +3587,7 @@ export function JobManagement() {
                                       </span>
                                     </div>
                                     <span className={`font-mono text-xs font-semibold whitespace-nowrap ${isJoint ? 'text-amber-700' : 'text-gray-600'} bg-gray-100 px-1.5 py-0.5 rounded-md`}>
-                                      {item.quantityUsed.toLocaleString()} shs
+                                      {((item.allocatedPaper !== undefined && item.allocatedPaper !== null) ? item.allocatedPaper : (item.quantityUsed ?? 0)).toLocaleString()} shs
                                     </span>
                                   </div>
 
@@ -3280,7 +3601,7 @@ export function JobManagement() {
                                               #{lj.id.slice(-4).toUpperCase()} ({lj.clientName})
                                             </span>
                                             <span className="font-mono text-[9px] text-[#5A5A40] shrink-0 font-semibold">
-                                              {lj.items?.filter(li => li.stockId === item.stockId).map(li => li.quantityUsed).join(', ') || item.quantityUsed} sheets
+                                              {lj.items?.filter(li => li.stockId === item.stockId).map(li => ((li.allocatedPaper !== undefined && li.allocatedPaper !== null) ? li.allocatedPaper : (li.quantityUsed ?? 0)).toLocaleString()).join(', ') || ((item.allocatedPaper !== undefined && item.allocatedPaper !== null) ? item.allocatedPaper : (item.quantityUsed ?? 0)).toLocaleString()} sheets
                                             </span>
                                           </div>
                                         ))}
@@ -3537,7 +3858,7 @@ export function JobManagement() {
                                     </div>
                                     <div className="flex justify-between text-[11px] text-amber-900/80 mt-1">
                                       <span>Sheets Required:</span>
-                                      <span className="font-bold font-mono text-amber-950">{item.quantityUsed} sheets</span>
+                                      <span className="font-bold font-mono text-amber-950">{((item.allocatedPaper !== undefined && item.allocatedPaper !== null) ? item.allocatedPaper : (item.quantityUsed ?? 0)).toLocaleString()} sheets</span>
                                     </div>
                                     {paperRef && (
                                       <div className="text-[10px] text-amber-800/80 mt-1.5 pt-1.5 border-t border-amber-100/50 flex items-center justify-between">
@@ -3645,13 +3966,14 @@ export function JobManagement() {
       {editingJob && (
         <Dialog open={!!editingJob} onOpenChange={() => {
           setEditingJob(null);
-          setFormData({ clientName: '', jobDescription: '', selectedItems: getInitialSelectedItems(), platesUsed: getInitialPlatesUsed(), processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '', isRepeat: false, repeatRef: '', date: new Date().toISOString().split('T')[0], paperBillingMethod: '', paperBillingRate: 0, paperBillingAmount: 0 } as any);
+          setFormData({ clientName: '', jobDescription: '', selectedItems: getInitialSelectedItems(), platesUsed: getInitialPlatesUsed(), processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '', isRepeat: false, repeatRef: '', date: new Date().toISOString().split('T')[0], paperBillingMethod: '', paperBillingRate: 0, paperBillingAmount: 0, additionalCharges: 0 } as any);
         }}>
           <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Edit Job</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleUpdateJob} className="space-y-6 py-4">
+              {/* UNIQUE_EDIT_FORM_MARKER */}
               <div className="space-y-4">
                 <div className="flex justify-between items-center px-1">
                   <span className="text-xs text-gray-400 font-medium font-mono uppercase tracking-widest">Job Details</span>
@@ -3683,25 +4005,6 @@ export function JobManagement() {
                     </Label>
                     <Input id="edit-jobDescription" value={formData.jobDescription} onChange={e => setFormData({...formData, jobDescription: e.target.value})} required className="bg-white border-gray-200" />
                   </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-orderedQuantity" className="flex items-center gap-1 text-sm font-semibold text-gray-700">
-                    <span>{formData.isJoint ? "Produced Finished Product Quantity (Read-only for Joint Jobs)" : "Ordered Finished Product Quantity"}</span>
-                  </Label>
-                  <Input 
-                    id="edit-orderedQuantity" 
-                    type="number" 
-                    placeholder={formData.isJoint ? "Total Sheets Used × Matter Ups" : "e.g. 10000"} 
-                    value={formData.orderedQuantity} 
-                    onChange={e => handleOrderedQuantityChange(e.target.value)} 
-                    readOnly={formData.isJoint}
-                    className={formData.isJoint ? "bg-amber-50 border-amber-200 text-amber-900 font-bold cursor-default" : "bg-white border-gray-200"}
-                  />
-                  {formData.isJoint && (
-                    <p className="text-[11px] text-amber-700 font-medium font-sans">
-                      Note: Joint runs automatically calculate and set this value based on <strong>Total Sheets Used × Matter Ups</strong>.
-                    </p>
-                  )}
                 </div>
                 <div className="space-y-3 p-4 bg-gray-50 rounded-2xl border border-gray-200 mt-3 shadow-xs">
                   <Label className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">Job Link Workflow / Relationship</Label>
@@ -3950,7 +4253,7 @@ export function JobManagement() {
                   </Button>
                 </div>
                 
-                {formData.selectedItems.map((item, index) => {
+                {formData.selectedItems.map((item, index) => { /* EDIT_FORM_EXCLUSIVE */
                   const isLinkedJob = !!(formData.isJoint && formData.jointJobType === 'linked');
                   return (
                     <div key={index} className="p-5 bg-white rounded-2xl border border-gray-200 shadow-sm space-y-4 relative">
@@ -4050,42 +4353,15 @@ export function JobManagement() {
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-12 gap-4 pt-2 border-t border-gray-100">
-                        {/* Paper Rate */}
-                        <div className="md:col-span-4 space-y-1.5">
-                          <Label className="text-xs font-bold text-gray-500 uppercase">Paper Rate (per sheet)</Label>
-                          <Input 
-                            type="number" 
-                            step="any"
-                            placeholder="e.g. 1.50" 
-                            value={item.paperRate || ''} 
-                            onChange={e => handleItemChange(index, 'paperRate', e.target.value === '' ? 0 : Number(e.target.value))} 
-                            onFocus={e => { if (e.target.value === '0') e.target.select(); }}
-                            readOnly={isLinkedJob}
-                            className={`${isLinkedJob ? "bg-gray-100 cursor-not-allowed text-gray-600 font-medium" : "bg-gray-50"} border-gray-200 h-9`}
-                          />
-                        </div>
-
                         {/* Produced Quantity */}
-                        <div className="md:col-span-4 space-y-1.5">
+                        <div className="md:col-span-12 space-y-1.5">
                           <Label className="text-xs font-bold text-gray-500 uppercase">Produced Quantity (Read Only)</Label>
                           <Input 
-                            value={((item.quantityUsed || 0) * (item.ups || 1)).toLocaleString()}
+                            value={((item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0)) * (item.ups || 1)).toLocaleString()}
                             readOnly
                             placeholder="Sheets × Ups"
                             className="bg-blue-50 border-blue-200 h-9 font-semibold text-blue-700 cursor-default"
                           />
-                        </div>
-
-                        {/* Estimated cost display */}
-                        <div className="md:col-span-4 flex flex-col justify-end">
-                          {item.stockId && (
-                            <div className="p-2 py-1.5 bg-gray-50 border border-gray-150 rounded-lg text-right h-9 flex items-center justify-between px-3 text-xs text-gray-600">
-                              <span className="font-medium">Total Paper Cost:</span>
-                              <span className="font-bold text-gray-900 font-mono">
-                                AED {((item.quantityUsed || 0) * (item.paperRate || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </span>
-                            </div>
-                          )}
                         </div>
                       </div>
                       
@@ -4412,6 +4688,9 @@ export function JobManagement() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {formData.processCharges.map((pc) => {
                     const isStandard = ['printing', 'cutting', 'folding', 'binding'].includes(pc.id);
+                    if (!formData.isJoint && (pc.id === 'cutting' || pc.id === 'folding')) {
+                      return null;
+                    }
                     return (
                       <div key={pc.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col gap-2 relative">
                         <div className="flex items-center justify-between gap-1.5">
@@ -4471,6 +4750,16 @@ export function JobManagement() {
           })}     
           </div>
               </div>
+
+              <BillingSection 
+                formData={formData} 
+                setFormData={setFormData}
+                rawJobs={rawJobs}
+                getPaperQuantityForBilling={getPaperQuantityForBilling}
+                calculatePaperBillingAmount={calculatePaperBillingAmount}
+                stocks={stocks}
+                recalculateAllocatedPapersForForm={recalculateAllocatedPapersForForm}
+              />
 
                             <DialogFooter>
                 <Button type="submit" className="bg-[#5A5A40] hover:bg-[#4A4A30] w-full h-12 rounded-full text-lg">

@@ -388,7 +388,7 @@ export function JobPreviewModal({ isOpen, onClose, job: initialJob, stocks, jobs
                                       <div className="font-bold text-gray-900">{stock?.name || 'Unknown Stock'}</div>
                                     </td>
                                     <td className="p-2 text-center font-mono font-medium">
-                                      {item.quantityUsed.toLocaleString()} shs
+                                      {(item.allocatedPaper !== undefined ? item.allocatedPaper : item.quantityUsed).toLocaleString()} shs
                                     </td>
                                     <td className="p-2 text-right">
                                       {item.isJoint ? (

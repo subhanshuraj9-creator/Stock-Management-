@@ -135,6 +135,10 @@
         "paperBillingAmount": {
           "type": "number",
           "description": "Automatically computed or manually entered customer paper billing amount"
+        },
+        "additionalCharges": {
+          "type": "number",
+          "description": "Additional miscellaneous charges for other fees"
         }
       },
       "required": ["clientName", "jobDescription", "date", "items"]

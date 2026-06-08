@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, orderBy, onSnapshot, getDocs, writeBatch } from 'firebase/firestore';
-import { StockItem, Job, Payment, StockHistory } from '../types';
+import { StockItem, Job, Payment, StockHistory, JointRun } from '../types';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Package, FileText, AlertTriangle, TrendingUp, Clock, ArrowRight, Trash2, Truck, IndianRupee, ArrowUpRight, BarChart3, TrendingDown } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -10,10 +10,189 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from './ui/button';
 import { toast } from 'sonner';
 
+function getJobRunId(job: any): string {
+  if (job.sharedRunId) return job.sharedRunId.trim().toUpperCase();
+  if (job.isJoint) {
+    if (job.jointRef) {
+      return job.jointRef.trim().toUpperCase().replace('#', '');
+    }
+    if (job.id) {
+      return job.id.slice(-4).toUpperCase();
+    }
+  }
+  return '';
+}
+
+function synchronizeJobsData(allJobs: any[], allJointRuns: JointRun[]): any[] {
+  // 1. Resolve paper/rate copy & alignment across groups based on JointRuns first
+  const jobsWithResolvedJoints = allJobs.map(job => {
+    const resolvedJob = {
+      ...job,
+      items: (job.items || []).map((it: any) => ({ ...it })),
+      platesUsed: (job.platesUsed || []).map((it: any) => ({ ...it }))
+    };
+
+    if (resolvedJob.isJoint && resolvedJob.sharedRunId) {
+      // Find JointRun
+      const jr = allJointRuns.find(r => r.sharedRunId === resolvedJob.sharedRunId);
+      if (jr) {
+        // Merge Paper Stock, Total Sheets Used, Wastage Sheets, Size, Section, Notes
+        resolvedJob.items = (resolvedJob.items || []).map((it: any) => {
+          return {
+            ...it,
+            stockId: jr.paper?.stockId || it.stockId,
+            quantityUsed: jr.totalSheetsUsed !== undefined ? jr.totalSheetsUsed : it.quantityUsed,
+            wastageSheets: jr.wastageSheets !== undefined ? jr.wastageSheets : it.wastageSheets,
+            paperRate: jr.paper?.paperRate !== undefined ? jr.paper.paperRate : it.paperRate,
+            isJoint: true,
+            paperRef: jr.sharedRunId
+          };
+        });
+
+        // If items helper is empty, initialize it!
+        if (resolvedJob.items.length === 0) {
+          resolvedJob.items = [{
+            stockId: jr.paper?.stockId || '',
+            quantityUsed: jr.totalSheetsUsed !== undefined ? jr.totalSheetsUsed : 0,
+            wastageSheets: jr.wastageSheets !== undefined ? jr.wastageSheets : 0,
+            paperRate: jr.paper?.paperRate !== undefined ? jr.paper.paperRate : 0,
+            ups: 1,
+            isJoint: true,
+            paperRef: jr.sharedRunId
+          }];
+        }
+
+        // Populate paper details
+        resolvedJob.paperSize = jr.paper?.paperSize || '';
+        resolvedJob.paperSection = jr.paper?.paperSection || '';
+        resolvedJob.paperNotes = jr.paper?.paperNotes || '';
+        resolvedJob.productionNotes = jr.paper?.productionNotes || '';
+
+        // Merge plates
+        const nonJointPlates = (job.platesUsed || []).filter((p: any) => !p.isJoint);
+        const sharedPlates = (jr.sharedPlates || []).map((p: any) => ({
+          ...p,
+          isJoint: true,
+          plateRef: jr.sharedRunId
+        }));
+        resolvedJob.platesUsed = [...sharedPlates, ...nonJointPlates];
+      }
+    }
+    return resolvedJob;
+  });
+
+  // 2. Identify modern and legacy groups
+  const runIdToGroupJobs = new Map<string, any[]>();
+  jobsWithResolvedJoints.forEach(job => {
+    const runId = getJobRunId(job);
+    if (runId) {
+      if (!runIdToGroupJobs.has(runId)) {
+        runIdToGroupJobs.set(runId, []);
+      }
+      runIdToGroupJobs.get(runId)!.push(job);
+    }
+  });
+
+  // For any group, if there is no matching JointRun, we do the fallback in-memory synchronization
+  runIdToGroupJobs.forEach((group, runId) => {
+    const hasRealRun = allJointRuns.some(r => r.sharedRunId === runId);
+    if (!hasRealRun) {
+      const masterJob = group.find(j => j.jointJobType === 'master') || 
+                        group.find(j => j.id && j.id.slice(-4).toUpperCase() === runId) ||
+                        group[0];
+
+      if (masterJob) {
+        group.forEach(job => {
+          if (job.id !== masterJob.id) {
+            job.items = (masterJob.items || []).map((masterItem: any, idx: number) => {
+              const currentItem = job.items?.[idx] || {};
+              return {
+                ...currentItem,
+                stockId: masterItem.stockId,
+                paperRate: masterItem.paperRate || 0,
+                quantityUsed: masterItem.quantityUsed || 0,
+                wastageSheets: masterItem.wastageSheets || 0,
+                isJoint: true,
+                paperRef: runId
+              };
+            });
+          }
+        });
+      }
+    }
+
+    // Re-calculate ordered quantities and allocations inside group
+    const firstJob = group[0];
+    if (firstJob) {
+      const firstItems = firstJob.items || [];
+      firstItems.forEach((fItem: any, idx: number) => {
+        const masterActual = Number(fItem.quantityUsed) || 0;
+
+        let totalTheoretical = 0;
+        const jobToTheoretical = new Map<string, number>();
+
+        group.forEach(job => {
+          const item = job.items?.[idx];
+          if (item) {
+            const ups = Number(item.ups) || 1;
+            const actualUsed = Number(item.quantityUsed) || 0;
+            const theoretical = actualUsed * ups;
+            jobToTheoretical.set(job.id, theoretical);
+            totalTheoretical += theoretical;
+          }
+        });
+
+        group.forEach(job => {
+          const item = job.items?.[idx];
+          if (item) {
+            const theoretical = jobToTheoretical.get(job.id) || 0;
+            let allocated = 0;
+            if (totalTheoretical > 0) {
+              allocated = Math.round((theoretical / totalTheoretical) * masterActual);
+            }
+            item.allocatedPaper = allocated;
+          }
+        });
+      });
+
+      // Compute orderedQuantity for each job
+      group.forEach(job => {
+        job.orderedQuantity = (job.items || []).reduce((acc: number, item: any) => {
+          return acc + (Number(item.quantityUsed || 0) * (Number(item.ups) || 1));
+        }, 0);
+      });
+    }
+  });
+
+  // 3. For standard jobs, allocatedPaper = quantityUsed
+  jobsWithResolvedJoints.forEach(job => {
+    const inJointGroup = Array.from(runIdToGroupJobs.values()).some(group => 
+      group.some(gj => gj.id === job.id)
+    );
+
+    if (!inJointGroup) {
+      job.items = (job.items || []).map((item: any) => ({
+        ...item,
+        allocatedPaper: Number(item.quantityUsed) || 0
+      }));
+      job.orderedQuantity = (job.items || []).reduce((acc: number, item: any) => {
+        return acc + (Number(item.quantityUsed || 0) * (Number(item.ups) || 1));
+      }, 0);
+    }
+  });
+
+  return jobsWithResolvedJoints;
+}
+
 export function Dashboard() {
   const [stocks, setStocks] = useState<StockItem[]>([]);
-  const [allJobs, setAllJobs] = useState<Job[]>([]);
+  const [rawJobs, setRawJobs] = useState<Job[]>([]);
+  const [jointRuns, setJointRuns] = useState<JointRun[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+
+  const allJobs = React.useMemo(() => {
+    return synchronizeJobsData(rawJobs, jointRuns);
+  }, [rawJobs, jointRuns]);
   const [history, setHistory] = useState<StockHistory[]>([]);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
@@ -45,9 +224,15 @@ export function Dashboard() {
 
     const jobsQ = query(collection(db, 'jobs'), orderBy('date', 'desc'));
     const jobsUnsubscribe = onSnapshot(jobsQ, (snapshot) => {
-      setAllJobs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job)));
+      setRawJobs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job)));
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'jobs');
+    });
+
+    const jointRunsUnsubscribe = onSnapshot(collection(db, 'jointRuns'), (snapshot) => {
+      setJointRuns(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JointRun)));
+    }, (error) => {
+      // ignore
     });
 
     const paymentsUnsubscribe = onSnapshot(collection(db, 'payments'), (snapshot) => {
@@ -65,6 +250,7 @@ export function Dashboard() {
     return () => {
       stocksUnsubscribe();
       jobsUnsubscribe();
+      jointRunsUnsubscribe();
       paymentsUnsubscribe();
       historyUnsubscribe();
     };
@@ -85,7 +271,39 @@ export function Dashboard() {
   };
 
   const computeJobDebit = (job: Job, jobsList: Job[], stocksList: StockItem[]) => {
-    let paperTotal = 0;
+    // 1. Calculate paper stock material cost
+    const paperStockMaterialCost = (job.items || []).reduce((sum, item) => {
+      const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
+      return sum + (sheetsUsed * (item.paperRate || 0));
+    }, 0);
+
+    // 2. Determine paperTotal using stored paperBillingAmount or falling back to material cost
+    const billingQty = (job.items || []).reduce((sum, item) => {
+      const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
+      return sum + sheetsUsed;
+    }, 0);
+
+    let paperTotal = paperStockMaterialCost;
+    if (job.paperBillingMethod) {
+      if (job.paperBillingMethod === 'custom') {
+        paperTotal = job.paperBillingAmount || 0;
+      } else {
+        const rate = job.paperBillingRate || 0;
+        let calculated = 0;
+        switch (job.paperBillingMethod) {
+          case '100sheets':
+            calculated = (billingQty / 100) * rate;
+            break;
+          case 'gross':
+            calculated = (billingQty / 144) * rate;
+            break;
+          case 'ream':
+            calculated = (billingQty / 500) * rate;
+            break;
+        }
+        paperTotal = Math.round(calculated * 100) / 100;
+      }
+    }
 
     let plateTotal = 0;
     const platesToProcess = [...(job.platesUsed || [])];
@@ -119,7 +337,17 @@ export function Dashboard() {
       }
     });
 
-    return paperTotal + plateTotal + processTotal;
+    let laminationTotal = 0;
+    if (job.lamination?.halfEnabled) {
+      laminationTotal += (job.lamination.halfQty || 0) * (job.lamination.halfRate || 0);
+    }
+    if (job.lamination?.fullEnabled) {
+      laminationTotal += (job.lamination.fullQty || 0) * (job.lamination.fullRate || 0);
+    }
+
+    const additionalCharges = job.additionalCharges || 0;
+
+    return paperTotal + plateTotal + processTotal + laminationTotal + additionalCharges;
   };
 
   // Memoized lists for graphs

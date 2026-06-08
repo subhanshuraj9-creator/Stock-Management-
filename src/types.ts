@@ -71,6 +71,7 @@ export interface Job {
   paperBillingMethod?: '100sheets' | 'gross' | 'ream' | 'custom' | '';
   paperBillingRate?: number;
   paperBillingAmount?: number;
+  additionalCharges?: number;
 }
 
 export interface JointRun {
