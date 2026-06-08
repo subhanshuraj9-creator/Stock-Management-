@@ -168,12 +168,7 @@ export function StockManagement() {
     quantity: '',
     type: 'paper' as StockType,
     inkContainers: [] as { weight: string, count: string }[],
-    defaultRate: '',
     paperType: '',
-    unit: 'Sheets',
-    brand: '',
-    millName: '',
-    shade: '',
     notes: ''
   });
 
@@ -3810,7 +3805,6 @@ export function StockManagement() {
                               className="rounded-xl border-gray-200 h-11 bg-white" 
                               value={purchaseFormData.rate} 
                               onChange={e => setPurchaseFormData({...purchaseFormData, rate: e.target.value})} 
-                              required
                             />
                           </div>
                         </div>
@@ -3862,7 +3856,6 @@ export function StockManagement() {
                               className="rounded-xl border-gray-200 h-11 bg-white" 
                               value={purchaseFormData.rate} 
                               onChange={e => setPurchaseFormData({...purchaseFormData, rate: e.target.value})} 
-                              required 
                             />
                           </div>
                         </div>
