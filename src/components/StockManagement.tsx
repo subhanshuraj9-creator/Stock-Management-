@@ -169,6 +169,11 @@ export function StockManagement() {
     type: 'paper' as StockType,
     inkContainers: [] as { weight: string, count: string }[],
     paperType: '',
+    defaultRate: '',
+    unit: 'Sheets',
+    brand: '',
+    millName: '',
+    shade: '',
     notes: ''
   });
 

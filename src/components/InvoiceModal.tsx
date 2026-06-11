@@ -193,6 +193,7 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
 
   // Calculate totals
   const papersTotal = (job.items || []).reduce((sum, item) => {
+    if (item.paperSource === 'party') return sum;
     const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
     return sum + (sheetsUsed * (item.paperRate || 0));
   }, 0);
@@ -202,6 +203,7 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
   
   // Calculate billing qty based on allocated paper
   const billingQty = (job.items || []).reduce((sum, item) => {
+    if (item.paperSource === 'party') return sum;
     const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
     return sum + sheetsUsed;
   }, 0);
@@ -262,6 +264,22 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
     const paperRowsList = job.items.map(item => {
       const stock = stocks.find(s => s.id === item.stockId);
       const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
+
+      if (item.paperSource === 'party') {
+        return `
+          <tr>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); font-size: 13px;">
+              <div style="font-weight: 650; color: #1a202c;">${stock?.name || 'Stock Material'} <span style="font-size: 9px; background-color: #f3f4f6; color: #4b5563; border: 1px solid #e5e7eb; padding: 1px 4px; border-radius: 4px; font-weight: bold; margin-left: 6px; text-transform: uppercase; font-family: sans-serif;">Party Paper</span></div>
+              <div style="font-size: 11px; color: #718096; margin-top: 1px;">Provided by party (no paper charges)</div>
+            </td>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace;">
+              ${sheetsUsed.toLocaleString()}
+            </td>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace; color: #9ca3af;">-</td>
+            <td style="padding: 10px; border-bottom: 1px solid var(--border-color); text-align: right; font-size: 13px; font-family: monospace; color: #6b7280; font-weight: bold;">Party Provided</td>
+          </tr>
+        `;
+      }
 
       if (hasPaperBillingLocal) {
         return `
@@ -701,6 +719,22 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
     const paperRowsList = job.items.map(item => {
       const stock = stocks.find(s => s.id === item.stockId);
       const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
+
+      if (item.paperSource === 'party') {
+        return `
+          <tr>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; font-size: 13.5px;">
+              <div style="font-weight: 650; color: #2d3748;">${stock?.name || 'Stock Material'} <span style="font-size: 9px; background-color: #f3f4f6; color: #4b5563; border: 1px solid #e5e7eb; padding: 1px 4px; border-radius: 4px; font-weight: bold; margin-left: 6px; text-transform: uppercase;">Party Paper</span></div>
+              <div style="font-size: 11.5px; color: #718096; margin-top: 1px;">Provided by party (no paper charges)</div>
+            </td>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#4a5568;">
+              ${sheetsUsed.toLocaleString()}
+            </td>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-family: Menlo, Monaco, monospace; color:#cbd5e0;">-</td>
+            <td style="padding: 12px; border-bottom: 1px solid #f1f1f1; text-align: right; font-size: 13.5px; font-weight: bold; font-family: Menlo, Monaco, monospace; color:#718096;">Provided By Party</td>
+          </tr>
+        `;
+      }
 
       if (hasPaperBillingLocal) {
         return `
@@ -1373,11 +1407,17 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                   const stock = stocks.find(s => s.id === item.stockId);
                   const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
                   const totalCost = sheetsUsed * (item.paperRate || 0);
+                  const isPartyPaper = item.paperSource === 'party';
                   return (
                     <div key={`p-idx-${idx}`} className="flex justify-between items-start text-xs font-sans py-1 hover:bg-gray-50 rounded px-1">
                       <div>
                         <span className="font-semibold text-gray-900 flex flex-wrap items-center gap-1.5 leading-tight">
                           {stock?.name || 'Stock Material'}
+                          {isPartyPaper && (
+                            <span className="text-[9px] bg-gray-100 text-gray-600 font-bold px-1.5 py-0.5 rounded border border-gray-200 uppercase leading-none">
+                              Party Provided
+                            </span>
+                          )}
                         </span>
                         <div className="text-[10px] text-gray-400">
                           {sheetsUsed.toLocaleString()} sheets (used/allocated)
@@ -1385,13 +1425,25 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                       </div>
                       {!hasPaperBilling && (
                         <div className="text-right">
-                          <span className="font-mono font-semibold text-gray-900">₹{totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-                          <div className="text-[10px] text-gray-400">@ ₹{(item.paperRate || 0).toLocaleString('en-IN')}</div>
+                          {isPartyPaper ? (
+                            <span className="font-mono font-bold text-gray-500">Party Provided</span>
+                          ) : (
+                            <>
+                              <span className="font-mono font-semibold text-gray-900">₹{totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                              <div className="text-[10px] text-gray-400">@ ₹{(item.paperRate || 0).toLocaleString('en-IN')}</div>
+                            </>
+                          )}
+                        </div>
+                      )}
+                      {hasPaperBilling && isPartyPaper && (
+                        <div className="text-right shrink-0">
+                          <span className="font-mono font-bold text-gray-500 text-[10px]">Party Provided</span>
                         </div>
                       )}
                     </div>
                   );
                 })}
+              </div>
 
                 {/* Unified Paper Billing Row inside item list if configured */}
                 {hasPaperBilling && (() => {
@@ -1491,7 +1543,6 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
                   </div>
                 )}
               </div>
-            </div>
 
             {/* Calculations breakdown block */}
             <div className="border-t pt-4 flex flex-col items-end space-y-1.5 text-xs text-gray-600">

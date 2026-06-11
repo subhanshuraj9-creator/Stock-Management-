@@ -27,6 +27,7 @@ export interface JobItem {
   paperRef?: string;
   paperRate?: number; // Optional paper rate/estimate per sheet
   wastageSheets?: number; // Wastage Sheets
+  paperSource?: 'press' | 'party'; // Source of the paper: 'press' (our press) or 'party' (provided by client)
 }
 
 export interface Job {

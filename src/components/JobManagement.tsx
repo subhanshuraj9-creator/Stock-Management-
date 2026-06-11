@@ -196,6 +196,7 @@ const BillingSection = ({
   const paperStockCost = useMemo(() => {
     const resolvedItems = recalculateAllocatedPapersForForm(formData, rawJobs);
     return resolvedItems.reduce((sum: number, item: any) => {
+      if (item.paperSource === 'party') return sum;
       const qty = item.allocatedPaper !== undefined ? item.allocatedPaper : (Number(item.quantityUsed) || 0);
       const rate = Number(item.paperRate) || 0;
       return sum + (qty * rate);
@@ -825,6 +826,7 @@ export function JobManagement() {
   const getPaperQuantityForBilling = (tempForm: any, allJobs: any[]): number => {
     const resolvedItems = recalculateAllocatedPapersForForm(tempForm, allJobs);
     return resolvedItems.reduce((sum, item) => {
+      if (item.paperSource === 'party') return sum;
       const qty = item.allocatedPaper !== undefined ? item.allocatedPaper : (Number(item.quantityUsed) || 0);
       return sum + qty;
     }, 0);
@@ -1389,7 +1391,17 @@ export function JobManagement() {
     if (field === 'stockId' && value) {
       const selectedStock = stocks.find(s => s.id === value);
       if (selectedStock) {
-        mergedItem.paperRate = selectedStock.defaultRate || 0;
+        mergedItem.paperRate = mergedItem.paperSource === 'party' ? 0 : (selectedStock.defaultRate || 0);
+      }
+    }
+
+    // Handle paperSource toggle rate sync
+    if (field === 'paperSource') {
+      if (value === 'party') {
+        mergedItem.paperRate = 0;
+      } else {
+        const selectedStock = stocks.find(s => s.id === (mergedItem.stockId || ''));
+        mergedItem.paperRate = selectedStock?.defaultRate || 0;
       }
     }
 
@@ -1611,7 +1623,7 @@ export function JobManagement() {
         // Paper stock deduction (only Master deducts; Linked jobs bypass)
         const paperItemsToDeduct = isJobLinked 
           ? [] 
-          : cleanSelectedItems.map(i => ({ 
+          : cleanSelectedItems.filter(i => i.paperSource !== 'party').map(i => ({ 
               id: i.stockId, 
               used: Number(i.quantityUsed) + (Number(i.wastageSheets) || 0) 
             }));
@@ -2210,20 +2222,20 @@ export function JobManagement() {
 
         const stockChanges = new Map<string, number>();
 
-        // 1. Add back old paper if the old state did NOT bypass paper deduction (i.e. not old linked)
+        // 1. Add back old paper if the old state did NOT bypass paper deduction (i.e. not old linked) and was NOT party provided
         if (!isOldJobLinked) {
           editingJob.items.forEach(it => {
-            if (it.stockId) {
+            if (it.stockId && it.paperSource !== 'party') {
               const qty = Number(it.quantityUsed || 0) + (Number(it.wastageSheets || 0));
               stockChanges.set(it.stockId, (stockChanges.get(it.stockId) || 0) + qty);
             }
           });
         }
 
-        // 2. Deduct new paper if the new state does NOT bypass paper deduction (i.e. not new linked)
+        // 2. Deduct new paper if the new state does NOT bypass paper deduction (i.e. not new linked) and is NOT party provided
         if (!isNewJobLinked) {
           cleanSelectedItems.forEach(it => {
-            if (it.stockId) {
+            if (it.stockId && it.paperSource !== 'party') {
               const qty = Number(it.quantityUsed || 0) + (Number(it.wastageSheets || 0));
               stockChanges.set(it.stockId, (stockChanges.get(it.stockId) || 0) - qty);
             }
@@ -2471,7 +2483,7 @@ export function JobManagement() {
               <span>Clear Jobs History</span>
             </Button>
           )}
-          <Dialog open={isAddOpen} onOpenChange={(open) => {
+          <Dialog open={isAddOpen} disablePointerDismissal={true} onOpenChange={(open) => {
           setIsAddOpen(open);
           if (open) {
             setFormData({
@@ -2499,7 +2511,14 @@ export function JobManagement() {
               <Plus className="mr-2 h-4 w-4" /> Create New Job
             </Button>
           } />
-          <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+          <DialogContent 
+            className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.stopPropagation();
+              }
+            }}
+          >
             <DialogHeader>
               <DialogTitle>Create New Job</DialogTitle>
             </DialogHeader>
@@ -2803,6 +2822,35 @@ export function JobManagement() {
                       </div>
 
                       <h4 className="font-serif text-sm font-semibold text-gray-700">Paper Item #{index + 1}</h4>
+
+                      {/* Paper Source Selection Segment Toggle */}
+                      <div className="space-y-1.5 bg-gray-50/50 p-2 border border-gray-100 rounded-xl">
+                        <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Paper Material Source</Label>
+                        <div className="grid grid-cols-2 gap-1.5 p-1 bg-gray-100/60 rounded-lg border border-gray-200/55">
+                          <button
+                            type="button"
+                            onClick={() => handleItemChange(index, 'paperSource', 'press')}
+                            className={`py-1.5 px-3 rounded-md text-[11px] font-medium transition-all ${
+                              (item.paperSource || 'press') === 'press'
+                                ? 'bg-white text-gray-800 shadow-3xs border border-gray-200/40 font-semibold'
+                                : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50/50'
+                            }`}
+                          >
+                            Our Press Paper (Standard)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleItemChange(index, 'paperSource', 'party')}
+                            className={`py-1.5 px-3 rounded-md text-[11px] font-medium transition-all ${
+                              item.paperSource === 'party'
+                                ? 'bg-[#5A5A40] text-white shadow-3xs font-semibold'
+                                : 'text-gray-500 hover:text-[#5A5A40] hover:bg-gray-50/50'
+                            }`}
+                          >
+                            Provided by Client / Party
+                          </button>
+                        </div>
+                      </div>
                       
                       <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
                         {/* Paper Stock */}
@@ -3584,6 +3632,11 @@ export function JobManagement() {
                                             Joint Job
                                           </Badge>
                                         )}
+                                        {item.paperSource === 'party' && (
+                                          <Badge className="bg-[#5A5A40] hover:bg-[#4A4A30] border-none text-white text-[9px] h-4 px-1 leading-none">
+                                            Party Paper
+                                          </Badge>
+                                        )}
                                       </span>
                                     </div>
                                     <span className={`font-mono text-xs font-semibold whitespace-nowrap ${isJoint ? 'text-amber-700' : 'text-gray-600'} bg-gray-100 px-1.5 py-0.5 rounded-md`}>
@@ -3964,11 +4017,18 @@ export function JobManagement() {
       )}
 
       {editingJob && (
-        <Dialog open={!!editingJob} onOpenChange={() => {
+        <Dialog open={!!editingJob} disablePointerDismissal={true} onOpenChange={() => {
           setEditingJob(null);
           setFormData({ clientName: '', jobDescription: '', selectedItems: getInitialSelectedItems(), platesUsed: getInitialPlatesUsed(), processCharges: getInitialProcessCharges(), lamination: getInitialLamination(), ignoreStockLimits: false, orderedQuantity: '', isJoint: false, jointRef: '', isRepeat: false, repeatRef: '', date: new Date().toISOString().split('T')[0], paperBillingMethod: '', paperBillingRate: 0, paperBillingAmount: 0, additionalCharges: 0 } as any);
         }}>
-          <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+          <DialogContent 
+            className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.stopPropagation();
+              }
+            }}
+          >
             <DialogHeader>
               <DialogTitle>Edit Job</DialogTitle>
             </DialogHeader>
@@ -4253,27 +4313,56 @@ export function JobManagement() {
                   </Button>
                 </div>
                 
-                {formData.selectedItems.map((item, index) => { /* EDIT_FORM_EXCLUSIVE */
-                  const isLinkedJob = !!(formData.isJoint && formData.jointJobType === 'linked');
-                  return (
-                    <div key={index} className="p-5 bg-white rounded-2xl border border-gray-200 shadow-sm space-y-4 relative">
-                      <div className="absolute top-4 right-4 animate-fadeIn">
-                        {!isLinkedJob && (
-                          <Button 
-                            type="button" 
-                            variant="ghost" 
-                            size="sm" 
-                            onClick={() => handleRemoveItem(index)} 
-                            className="text-red-500 hover:text-red-700 hover:bg-red-50 rounded-full h-8 px-2"
-                          >
-                            Remove Paper
-                          </Button>
-                        )}
-                      </div>
-
-                      <h4 className="font-serif text-sm font-semibold text-gray-700">Paper Item #{index + 1}</h4>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                 {formData.selectedItems.map((item, index) => { /* EDIT_FORM_EXCLUSIVE */
+                   const isLinkedJob = !!(formData.isJoint && formData.jointJobType === 'linked');
+                   return (
+                     <div key={index} className="p-5 bg-white rounded-2xl border border-gray-200 shadow-sm space-y-4 relative">
+                       <div className="absolute top-4 right-4 animate-fadeIn">
+                         {!isLinkedJob && (
+                           <Button 
+                             type="button" 
+                             variant="ghost" 
+                             size="sm" 
+                             onClick={() => handleRemoveItem(index)} 
+                             className="text-red-500 hover:text-red-700 hover:bg-red-50 rounded-full h-8 px-2"
+                           >
+                             Remove Paper
+                           </Button>
+                         )}
+                       </div>
+ 
+                       <h4 className="font-serif text-sm font-semibold text-gray-700">Paper Item #{index + 1}</h4>
+ 
+                       {/* Paper Source Selection Segment Toggle */}
+                       <div className="space-y-1.5 bg-gray-50/50 p-2 border border-gray-100 rounded-xl">
+                         <Label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Paper Material Source</Label>
+                         <div className="grid grid-cols-2 gap-1.5 p-1 bg-gray-100/60 rounded-lg border border-gray-200/55">
+                           <button
+                             type="button"
+                             onClick={() => handleItemChange(index, 'paperSource', 'press')}
+                             className={`py-1.5 px-3 rounded-md text-[11px] font-medium transition-all ${
+                               (item.paperSource || 'press') === 'press'
+                                 ? 'bg-white text-gray-800 shadow-3xs border border-gray-200/40 font-semibold'
+                                 : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50/50'
+                             }`}
+                           >
+                             Our Press Paper (Standard)
+                           </button>
+                           <button
+                             type="button"
+                             onClick={() => handleItemChange(index, 'paperSource', 'party')}
+                             className={`py-1.5 px-3 rounded-md text-[11px] font-medium transition-all ${
+                               item.paperSource === 'party'
+                                 ? 'bg-[#5A5A40] text-white shadow-3xs font-semibold'
+                                 : 'text-gray-500 hover:text-[#5A5A40] hover:bg-gray-50/50'
+                             }`}
+                           >
+                             Provided by Client / Party
+                           </button>
+                         </div>
+                       </div>
+                       
+                       <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
                         {/* Paper Stock */}
                         <div className="md:col-span-6 space-y-1.5">
                           <Label className="text-xs font-bold text-gray-500 uppercase">Select Paper Stock</Label>
