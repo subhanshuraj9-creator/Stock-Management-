@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { db } from '../firebase';
+import { db, storage } from '../firebase';
 import { doc, updateDoc, onSnapshot } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { Job, StockItem } from '../types';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
@@ -113,6 +114,23 @@ export function JobPreviewModal({ isOpen, onClose, job: initialJob, stocks, jobs
 
   const resolvedPreview = getResolvedPreviewImage();
 
+  const dataURLToBlob = (dataUrl: string) => {
+    try {
+      const arr = dataUrl.split(',');
+      const mime = arr[0].match(/:(.*?);/)![1];
+      const bstr = atob(arr[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+      return new Blob([u8arr], { type: mime });
+    } catch (e) {
+      console.error("Error converting data URL to blob", e);
+      throw new Error("Failed to convert image to binary format for storage upload.");
+    }
+  };
+
   // Handle local image uploaded/dropped
   const handleFile = (file: File) => {
     if (!file.type.startsWith('image/')) {
@@ -153,15 +171,22 @@ export function JobPreviewModal({ isOpen, onClose, job: initialJob, stocks, jobs
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, width, height);
-          const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+          const compressedBase64 = canvas.toDataURL('image/jpeg', 0.82);
 
           try {
+            const blobFile = dataURLToBlob(compressedBase64);
+            const storagePath = `jobs/${job.id}_artwork.jpg`;
+            const imageRef = ref(storage, storagePath);
+
+            await uploadBytes(imageRef, blobFile, { contentType: 'image/jpeg' });
+            const downloadUrl = await getDownloadURL(imageRef);
+
             const jobRef = doc(db, 'jobs', job.id);
-            await updateDoc(jobRef, { previewImage: compressedBase64 });
+            await updateDoc(jobRef, { previewImage: downloadUrl });
             toast.success('Artwork preview uploaded successfully!');
           } catch (err: any) {
-            console.error(err);
-            toast.error('Failed to save artwork preview to database');
+            console.error('Firebase Storage upload failed: ', err);
+            toast.error(err.message || 'Failed to upload artwork preview to Firebase Storage. Please make sure the Storage rules are deployed.');
           } finally {
             setIsUploading(false);
           }
@@ -211,6 +236,18 @@ export function JobPreviewModal({ isOpen, onClose, job: initialJob, stocks, jobs
       // Remove from the actual source holding the image
       const targetJobId = resolvedPreview.sourceJob.id || job.id;
       const jobRef = doc(db, 'jobs', targetJobId);
+      
+      const currentUrl = resolvedPreview.sourceJob.previewImage || job.previewImage;
+      if (currentUrl && currentUrl.startsWith('https://firebasestorage.googleapis.com')) {
+        try {
+          const storagePath = `jobs/${targetJobId}_artwork.jpg`;
+          const imageRef = ref(storage, storagePath);
+          await deleteObject(imageRef);
+        } catch (storageErr) {
+          console.warn("Storage item was not found/deleted, deleting reference anyway", storageErr);
+        }
+      }
+
       await updateDoc(jobRef, { previewImage: '' });
       toast.success('Artwork preview removed');
     } catch (err) {

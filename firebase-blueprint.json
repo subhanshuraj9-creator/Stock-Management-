@@ -26,6 +26,7 @@
       "description": "Represents a printing job for a client, tracking papers, rates, plates and combination references.",
       "type": "object",
       "properties": {
+        "jobNo": { "type": "number", "description": "Sequential job code number starting from 1 (#0001)" },
         "clientName": { "type": "string", "description": "Name of the client" },
         "jobDescription": { "type": "string", "description": "Details of the job" },
         "date": { "type": "number", "description": "Timestamp of when the job was created" },
@@ -234,6 +235,17 @@
         "timestamp": { "type": "number" }
       },
       "required": ["sharedRunId", "userEmail", "changedField", "oldValue", "newValue", "affectedJobs", "timestamp"]
+    },
+    "PartyOpeningBalance": {
+      "title": "Party Opening Balance",
+      "description": "Legacy opening balances for clients before system records.",
+      "type": "object",
+      "properties": {
+        "clientName": { "type": "string" },
+        "openingBalance": { "type": "number" },
+        "lastUpdated": { "type": "number" }
+      },
+      "required": ["clientName", "openingBalance"]
     }
   },
   "firestore": {
@@ -264,6 +276,10 @@
     "/jointRunAuditLogs/{logId}": {
       "schema": "JointRunAuditLog",
       "description": "Collection of joint run sync modifications audit history"
+    },
+    "/partyOpeningBalances/{id}": {
+      "schema": "PartyOpeningBalance",
+      "description": "Legacy client party opening balances"
     }
   }
 }

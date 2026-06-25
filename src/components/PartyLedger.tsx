@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, onSnapshot, addDoc, query, orderBy, deleteDoc, doc, writeBatch } from 'firebase/firestore';
-import { Job, StockItem, Payment, JointRun } from '../types';
+import { collection, onSnapshot, addDoc, query, orderBy, deleteDoc, doc, writeBatch, setDoc } from 'firebase/firestore';
+import { Job, StockItem, Payment, JointRun, PartyOpeningBalance } from '../types';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -219,6 +219,12 @@ export function PartyLedger() {
   const [jointRuns, setJointRuns] = useState<JointRun[]>([]);
   const [stocks, setStocks] = useState<StockItem[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [partyOpeningBalances, setPartyOpeningBalances] = useState<PartyOpeningBalance[]>([]);
+  const [isOpeningBalanceOpen, setIsOpeningBalanceOpen] = useState(false);
+  const [openingBalanceForm, setOpeningBalanceForm] = useState({
+    amount: '',
+    type: 'debit' as 'debit' | 'credit'
+  });
 
   const jobs = useMemo(() => {
     return synchronizeJobsData(rawJobs, jointRuns);
@@ -328,8 +334,10 @@ export function PartyLedger() {
     csvContent += "\n";
     csvContent += "Date,Type,Particulars,Debit (+),Credit (-),Running Balance\n";
 
-    if (startDate) {
-      csvContent += `"${format(new Date(startDate + 'T00:00:00'), 'dd-MM-yy')}","OPENING","Balance Brought Forward (Opening)","-","-","INR ${openingBalance.toFixed(2)}"\n`;
+    if (startDate || openingBalance !== 0) {
+      const dateStr = startDate ? format(new Date(startDate + 'T00:00:00'), 'dd-MM-yy') : '—';
+      const label = startDate ? 'Balance Brought Forward (Opening)' : 'Opening Balance (Past Dues/Advance)';
+      csvContent += `"${dateStr}","OPENING","${label}","-","-","INR ${openingBalance.toFixed(2)}"\n`;
     }
 
     const chronological = [...transactions].reverse();
@@ -406,16 +414,16 @@ export function PartyLedger() {
       </tr>
     `).join('');
 
-    const openingBalanceRow = startDate ? `
+    const openingBalanceRow = (startDate || openingBalance !== 0) ? `
       <tr style="border-bottom: 1px solid var(--border-color); background-color: var(--light-bg);">
         <td style="padding: 7px 12px; font-family: monospace; font-size: 11px; color: #718096;">
-          ${format(new Date(startDate + 'T00:00:00'), 'dd-MM-yy')}
+          ${startDate ? format(new Date(startDate + 'T00:00:00'), 'dd-MM-yy') : '—'}
         </td>
         <td style="padding: 7px 12px; font-size: 11px; font-weight: bold; color: #4a5568;">
           OPENING
         </td>
         <td style="padding: 7px 12px; font-size: 11.5px; font-weight: bold; color: #4a5568; font-style: italic;">
-          Balance Brought Forward (Opening)
+          ${startDate ? 'Balance Brought Forward (Opening)' : 'Opening Balance (Past Dues/Advance)'}
         </td>
         <td style="padding: 7px 12px; text-align: right;">-</td>
         <td style="padding: 7px 12px; text-align: right;">-</td>
@@ -748,18 +756,28 @@ export function PartyLedger() {
       handleFirestoreError(error, OperationType.LIST, 'payments');
     });
 
+    const partyBalancesQ = query(collection(db, 'partyOpeningBalances'));
+    const unsubscribePartyBalances = onSnapshot(partyBalancesQ, (snapshot) => {
+      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PartyOpeningBalance));
+      setPartyOpeningBalances(items);
+    }, (error) => {
+      // ignore
+    });
+
     return () => {
       unsubscribeJobs();
       unsubscribeJointRuns();
       unsubscribeStocks();
       unsubscribePayments();
+      unsubscribePartyBalances();
     };
   }, []);
 
   // Gather unique parties
   const uniqueParties = Array.from(new Set([
     ...jobs.map(j => j.clientName.trim()),
-    ...payments.map(p => p.clientName.trim())
+    ...payments.map(p => p.clientName.trim()),
+    ...partyOpeningBalances.map(b => b.clientName.trim())
   ])).filter(name => name.length > 0).sort();
 
   // If no party is selected but parties exist, select the first one
@@ -805,6 +823,39 @@ export function PartyLedger() {
       toast.success('Payment receipt deleted');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `payments/${id}`);
+    }
+  };
+
+  const handleOpenOpeningBalance = () => {
+    if (!selectedParty) return;
+    setOpeningBalanceForm({
+      amount: customOpeningAmount !== 0 ? Math.abs(customOpeningAmount).toString() : '',
+      type: customOpeningAmount >= 0 ? 'debit' : 'credit'
+    });
+    setIsOpeningBalanceOpen(true);
+  };
+
+  const handleSaveOpeningBalance = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedParty) return;
+
+    try {
+      const parsedAmount = Number(openingBalanceForm.amount) || 0;
+      const finalValue = openingBalanceForm.type === 'credit' ? -parsedAmount : parsedAmount;
+      const docId = selectedParty.trim().toLowerCase();
+      
+      const docRef = doc(db, 'partyOpeningBalances', docId);
+      await setDoc(docRef, {
+        clientName: selectedParty.trim(),
+        openingBalance: finalValue,
+        lastUpdated: Date.now()
+      });
+
+      setIsOpeningBalanceOpen(false);
+      toast.success(`Opening balance updated for ${selectedParty}`);
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to update opening balance');
     }
   };
 
@@ -972,7 +1023,10 @@ export function PartyLedger() {
     const fromTime = startStr ? new Date(startStr + 'T00:00:00').getTime() : null;
     const toTime = endStr ? new Date(endStr + 'T23:59:59').getTime() : null;
 
-    let openingBalance = 0;
+    const customBalObj = partyOpeningBalances.find(b => b.clientName.trim().toLowerCase() === partyName.trim().toLowerCase());
+    const customOpeningAmount = customBalObj ? customBalObj.openingBalance : 0;
+
+    let openingBalance = customOpeningAmount;
     const priorTransactions = allTransactions.filter(t => fromTime !== null && t.date < fromTime);
     priorTransactions.forEach(t => {
       if (t.type === 'debit') {
@@ -1006,7 +1060,7 @@ export function PartyLedger() {
     // Lifetime values
     let totalBilledOverall = 0;
     let totalPaidOverall = 0;
-    let balanceOverall = 0;
+    let balanceOverall = customOpeningAmount;
     allTransactions.forEach(t => {
       if (t.type === 'debit') {
         totalBilledOverall += t.amount;
@@ -1030,6 +1084,12 @@ export function PartyLedger() {
   };
 
   const { transactions, totalBilled, totalPaid, balance, openingBalance, totalBilledOverall, totalPaidOverall, balanceOverall } = getLedgerStatement(selectedParty, startDate, endDate);
+
+  const customOpeningAmount = useMemo(() => {
+    if (!selectedParty) return 0;
+    const customBalObj = partyOpeningBalances.find(b => b.clientName.trim().toLowerCase() === selectedParty.trim().toLowerCase());
+    return customBalObj ? customBalObj.openingBalance : 0;
+  }, [partyOpeningBalances, selectedParty]);
 
   const filteredParties = uniqueParties.filter(party => 
     party.toLowerCase().includes(searchTerm.toLowerCase())
@@ -1127,6 +1187,74 @@ export function PartyLedger() {
             </form>
           </DialogContent>
         </Dialog>
+
+        <Dialog open={isOpeningBalanceOpen} onOpenChange={setIsOpeningBalanceOpen}>
+          <DialogContent className="sm:max-w-[425px] rounded-[32px] max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="font-serif text-2xl">Set Opening Balance</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleSaveOpeningBalance} className="space-y-5 py-2">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label className="text-xs uppercase tracking-widest text-gray-400 font-bold block">Party / Client Name</Label>
+                  <p className="text-base font-semibold text-gray-800 bg-gray-50/80 px-3 py-2 rounded-xl border border-gray-100">
+                    {selectedParty}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="open-amount" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Opening Balance Amount (₹)</Label>
+                  <Input 
+                    id="open-amount" 
+                    type="number"
+                    step="any"
+                    placeholder="0.00" 
+                    value={openingBalanceForm.amount} 
+                    onChange={e => setOpeningBalanceForm({...openingBalanceForm, amount: e.target.value})} 
+                    required 
+                    className="rounded-xl border-gray-200 h-12"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs uppercase tracking-widest text-gray-400 font-bold block">Balance Type</Label>
+                  <div className="grid grid-cols-2 gap-3 mt-1">
+                    <button
+                      type="button"
+                      onClick={() => setOpeningBalanceForm({...openingBalanceForm, type: 'debit'})}
+                      className={`py-3 px-4 rounded-xl border font-semibold text-xs md:text-sm text-center transition-all ${
+                        openingBalanceForm.type === 'debit'
+                          ? 'bg-red-50 border-red-200 text-red-600 shadow-sm'
+                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      Debit / Due
+                      <span className="block text-[10px] font-normal text-gray-400 mt-0.5 font-sans">They owe you</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOpeningBalanceForm({...openingBalanceForm, type: 'credit'})}
+                      className={`py-3 px-4 rounded-xl border font-semibold text-xs md:text-sm text-center transition-all ${
+                        openingBalanceForm.type === 'credit'
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-600 shadow-sm'
+                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      Credit / Advance
+                      <span className="block text-[10px] font-normal text-gray-400 mt-0.5 font-sans">They paid advance</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <DialogFooter className="mt-4">
+                <Button type="submit" className="bg-[#5A5A40] hover:bg-[#4A4A30] w-full h-12 rounded-full text-lg mt-2">
+                  Save Opening Balance
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
         </div>
       </div>
 
@@ -1194,6 +1322,35 @@ export function PartyLedger() {
         <div className="lg:col-span-3 space-y-6">
           {selectedParty ? (
             <div className="space-y-6">
+              {/* Legacy Opening Balance Configuration Banner */}
+              <div className="bg-amber-50/20 rounded-2xl p-4 border border-amber-200/45 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                  <h4 className="font-serif text-sm font-semibold text-amber-900 flex items-center gap-2">
+                    <BookOpen size={16} className="text-[#5A5A40]" />
+                    <span>Legacy Opening Balance</span>
+                  </h4>
+                  <p className="text-[11px] text-gray-500 font-serif italic mt-0.5">
+                    Opening balance for <strong className="text-[#5A5A40] font-sans">{selectedParty}</strong> prior to first transaction in this ledger.
+                  </p>
+                </div>
+                <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-end">
+                  <div className="text-left sm:text-right">
+                    <p className="text-[9px] uppercase tracking-wider text-gray-400 font-bold">Configured Balance</p>
+                    <p className={`text-sm font-bold font-mono ${customOpeningAmount > 0 ? 'text-red-600' : customOpeningAmount < 0 ? 'text-emerald-600' : 'text-gray-500'}`}>
+                      {customOpeningAmount > 0 ? `₹${customOpeningAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })} (Dr/Due)` : customOpeningAmount < 0 ? `₹${Math.abs(customOpeningAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })} (Cr/Adv)` : '₹0.00 (None)'}
+                    </p>
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={handleOpenOpeningBalance}
+                    className="border-amber-200 hover:bg-amber-100 text-amber-900 rounded-full text-xs font-serif shrink-0 h-9 px-3"
+                  >
+                    Set Balance
+                  </Button>
+                </div>
+              </div>
+
               {/* Ledger Summary Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <Card className="border border-red-100 bg-red-50/20 shadow-none rounded-[20px] p-5">
@@ -1331,10 +1488,10 @@ export function PartyLedger() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {startDate && (
+                        {(startDate || openingBalance !== 0) && (
                           <TableRow className="bg-gray-50/50 border-gray-100/50 hover:bg-gray-50/80 transition-colors">
                             <TableCell className="pl-4 md:pl-6 text-xs text-gray-400 font-mono">
-                              {format(new Date(startDate + 'T00:00:00'), 'dd-MM-yy')}
+                              {startDate ? format(new Date(startDate + 'T00:00:00'), 'dd-MM-yy') : '—'}
                             </TableCell>
                             <TableCell>
                               <span className="inline-flex items-center text-[10px] font-bold bg-gray-100 text-gray-500 rounded-full px-2 py-0.5 border border-gray-200/50">
@@ -1343,8 +1500,12 @@ export function PartyLedger() {
                             </TableCell>
                             <TableCell className="py-3 md:py-4">
                               <div className="flex flex-col">
-                                <span className="text-gray-600 font-semibold text-xs md:text-sm italic">Balance Brought Forward (Opening)</span>
-                                <span className="text-[10px] text-gray-400">Account statement opening balance offset</span>
+                                <span className="text-gray-600 font-semibold text-xs md:text-sm italic">
+                                  {startDate ? 'Balance Brought Forward (Opening)' : 'Opening Balance (Past Dues/Advance)'}
+                                </span>
+                                <span className="text-[10px] text-gray-400">
+                                  {startDate ? 'Account statement opening balance offset' : 'Pre-existing legacy balance before transactions'}
+                                </span>
                               </div>
                             </TableCell>
                             <TableCell className="text-right font-mono text-xs md:text-sm text-gray-400">-</TableCell>
@@ -1416,7 +1577,7 @@ export function PartyLedger() {
 
                   {/* Mobile Statement - Custom Card-Based Ledger Log */}
                   <div className="md:hidden divide-y divide-gray-100">
-                    {startDate && (
+                    {(startDate || openingBalance !== 0) && (
                       <div className="p-4 bg-gray-50/50 space-y-2">
                         <div className="flex justify-between items-start">
                           <div>
@@ -1424,11 +1585,11 @@ export function PartyLedger() {
                               OPENING
                             </span>
                             <h4 className="text-xs font-serif italic font-semibold text-gray-600 mt-2">
-                              Balance Brought Forward
+                              {startDate ? 'Balance Brought Forward' : 'Opening Balance (Past Dues/Advance)'}
                             </h4>
                           </div>
                           <span className="text-xs font-mono text-gray-400">
-                            {format(new Date(startDate + 'T00:00:00'), 'dd-MM-yy')}
+                            {startDate ? format(new Date(startDate + 'T00:00:00'), 'dd-MM-yy') : '—'}
                           </span>
                         </div>
                         <div className="flex justify-between items-center pt-2 border-t border-gray-150/40">

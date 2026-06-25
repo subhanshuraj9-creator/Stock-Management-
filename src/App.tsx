@@ -14,12 +14,13 @@ import { PartyLedger } from './components/PartyLedger';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Button } from './components/ui/button';
-import { LogOut, LayoutDashboard, Package, FileText, Printer, BookOpen } from 'lucide-react';
+import { LogOut, LayoutDashboard, Package, FileText, Printer, BookOpen, AlertTriangle } from 'lucide-react';
 import { Toaster } from 'sonner';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [quotaWarning, setQuotaWarning] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -27,6 +28,16 @@ export default function App() {
       setLoading(false);
     });
     return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const handleQuotaWarning = () => {
+      setQuotaWarning(true);
+    };
+    window.addEventListener('firestore-quota-warning', handleQuotaWarning);
+    return () => {
+      window.removeEventListener('firestore-quota-warning', handleQuotaWarning);
+    };
   }, []);
 
   if (loading) {
@@ -64,7 +75,7 @@ export default function App() {
                 <p className="text-sm font-medium text-gray-900 capitalize">
                   {user.email?.split('@')[0]}
                 </p>
-                <p className="text-xs text-gray-400 uppercase tracking-widest font-bold">Administrator</p>
+                <p className="text-xs text-gray-400 uppercase tracking-widest font-bold">Admin</p>
               </div>
               <Button 
                 variant="ghost" 
@@ -77,6 +88,27 @@ export default function App() {
             </div>
           </div>
         </header>
+
+        {quotaWarning && (
+          <div className="bg-amber-50 border-b border-amber-200">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="text-amber-600 shrink-0 w-5 h-5" />
+                <p className="text-xs sm:text-sm text-amber-800 font-medium leading-relaxed">
+                  <strong>Local Caching Active:</strong> Firestore daily free read/sync limits have been exceeded. You can still fully browse, search, and manage print stock lists, jobs, and ledger details locally from cache. Updates will sync with the cloud server once Firestore resets the limits.
+                </p>
+              </div>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => setQuotaWarning(false)}
+                className="text-amber-700 hover:bg-amber-100 hover:text-amber-900 rounded-full h-8 px-3 font-medium shrink-0"
+              >
+                Dismiss
+              </Button>
+            </div>
+          </div>
+        )}
 
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 md:py-8">
           <Tabs defaultValue="dashboard" className="space-y-6 md:space-y-8">

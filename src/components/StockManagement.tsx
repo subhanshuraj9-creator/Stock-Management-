@@ -1555,11 +1555,7 @@ export function StockManagement() {
 
     const purchasesOnly = stockHistory.filter(h => 
       h.type === 'addition' && 
-      !h.notes?.toLowerCase().includes('initial') &&
-      !h.notes?.toLowerCase().includes('deleted') &&
-      !h.notes?.toLowerCase().includes('reconstructed') &&
-      !h.notes?.toLowerCase().includes('revert') &&
-      !h.notes?.toLowerCase().includes('return')
+      (h.notes?.startsWith('Purchase Restock.') || h.supplier || h.invoiceNo)
     );
 
     const augmentedPurchases = purchasesOnly.map(h => {
@@ -1808,10 +1804,11 @@ export function StockManagement() {
                 <TableRow className="border-gray-100 hover:bg-transparent">
                   <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider pl-4 md:pl-6 w-[120px]">Date</TableHead>
                   <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider">Item Details</TableHead>
+                  <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider">Supplier</TableHead>
                   <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right">Quantity</TableHead>
                   <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right">Purchase Rate</TableHead>
-                  <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right pr-4 md:pr-6">Total Cost</TableHead>
-                  <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-center">Invoice Info</TableHead>
+                  <TableHead className="font-serif italic text-gray-400 uppercase text-[10px] tracking-wider text-right">Total Cost</TableHead>
+                  <TableHead className="w-[50px] pr-4 md:pr-6 text-center font-serif italic text-gray-400 uppercase text-[10px] tracking-wider">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1823,9 +1820,9 @@ export function StockManagement() {
                     </TableCell>
                     
                     <TableCell>
-                      <div className="flex flex-col">
-                        <span className="font-semibold text-gray-800 text-sm">{p.stock?.name || 'Deleted Stock'}</span>
-                        <div className="flex items-center gap-1.5 mt-0.5">
+                      <div className="flex flex-col gap-1.5 py-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-gray-800 text-sm">{p.stock?.name || 'Deleted Stock'}</span>
                           <Badge variant="outline" className={`text-[9px] font-sans font-normal py-0 px-1 bg-opacity-30 ${
                             p.stock?.type === 'paper' ? 'bg-blue-50 text-blue-600 border-blue-100' : 
                             p.stock?.type === 'board' ? 'bg-amber-50 text-amber-600 border-amber-100' :
@@ -1834,13 +1831,68 @@ export function StockManagement() {
                           }`}>
                             {(p.stock?.type || 'Other').toUpperCase()}
                           </Badge>
-                          {p.notes && (
-                            <span className="text-[10px] text-gray-400 italic max-w-xs md:max-w-md truncate" title={p.notes}>
-                              {p.notes.replace('Purchase Restock. ', '')}
+                        </div>
+                        
+                        {p.stock && (
+                          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-gray-500 font-mono">
+                            {p.stock.paperType && (
+                              <span className="bg-gray-100 border border-gray-200/60 px-1.5 py-0.5 rounded text-[10px] text-gray-600 font-sans font-medium">
+                                {p.stock.paperType}
+                              </span>
+                            )}
+                            {p.stock.size && (
+                              <span className="bg-gray-50 border border-gray-100 px-1.5 py-0.5 rounded text-gray-600">
+                                Size: <strong className="text-gray-800 font-bold">{p.stock.size}</strong>
+                              </span>
+                            )}
+                            {p.stock.gsm && (
+                              <span className="bg-gray-50 border border-gray-100 px-1.5 py-0.5 rounded text-gray-600">
+                                GSM: <strong className="text-gray-800 font-bold">{p.stock.gsm} gsm</strong>
+                              </span>
+                            )}
+                            {p.stock.brand && (
+                              <span className="text-gray-400">
+                                Brand: <strong className="text-gray-600">{p.stock.brand}</strong>
+                              </span>
+                            )}
+                            {p.stock.millName && (
+                              <span className="text-gray-400">
+                                Mill: <strong className="text-gray-600">{p.stock.millName}</strong>
+                              </span>
+                            )}
+                            {p.stock.shade && (
+                              <span className="text-gray-400">
+                                Shade: <strong className="text-gray-600">{p.stock.shade}</strong>
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {p.notes && (
+                          <div className="text-[10px] text-gray-400 italic max-w-xs md:max-w-md truncate" title={p.notes}>
+                            {p.notes.replace('Purchase Restock. ', '')}
+                          </div>
+                        )}
+                      </div>
+                    </TableCell>
+
+                    <TableCell className="font-sans text-xs">
+                      {p.supplier || p.invoiceNo ? (
+                        <div className="flex flex-col">
+                          {p.supplier ? (
+                            <span className="font-semibold text-gray-800 text-sm">{p.supplier}</span>
+                          ) : (
+                            <span className="text-gray-400 italic">-</span>
+                          )}
+                          {p.invoiceNo && (
+                            <span className="text-[10px] text-gray-400 font-mono mt-0.5">
+                              Inv: #{p.invoiceNo}
                             </span>
                           )}
                         </div>
-                      </div>
+                      ) : (
+                        <span className="text-gray-300 italic">-</span>
+                      )}
                     </TableCell>
 
                     <TableCell className="text-right font-mono font-medium text-xs md:text-sm text-gray-700">
@@ -1851,34 +1903,26 @@ export function StockManagement() {
                       {p.rateLabel}
                     </TableCell>
 
-                    <TableCell className="text-right pr-4 md:pr-6 font-mono font-bold text-xs md:text-sm text-emerald-600">
+                    <TableCell className="text-right font-mono font-bold text-xs md:text-sm text-emerald-600">
                       ₹{p.totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </TableCell>
-
-                    <TableCell className="text-center font-sans text-xs">
-                      {p.invoiceNo || p.supplier ? (
-                        <div className="flex flex-col items-center">
-                          {p.invoiceNo && (
-                            <span className="font-mono bg-gray-150 text-gray-700 px-1.5 py-0.5 rounded text-[10px] uppercase font-bold" title="Invoice No.">
-                              #{p.invoiceNo}
-                            </span>
-                          )}
-                          {p.supplier && (
-                            <span className="text-[10px] text-gray-500 font-medium truncate max-w-[120px] mt-0.5" title={p.supplier}>
-                              {p.supplier}
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-gray-300 italic">-</span>
-                      )}
+                    <TableCell className="text-center pr-4 md:pr-6">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="text-red-400 hover:text-red-600 hover:bg-red-50 rounded-full h-8 w-8"
+                        onClick={() => setPurchaseToDelete(p)}
+                        title="Delete Purchase"
+                      >
+                        <Trash className="h-4 w-4" />
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
                 
                 {sortedPurchases.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="h-28 text-center text-gray-400 italic font-serif text-sm">
+                    <TableCell colSpan={7} className="h-28 text-center text-gray-400 italic font-serif text-sm">
                       No purchase entries match your current search/filter.
                     </TableCell>
                   </TableRow>
@@ -1930,7 +1974,19 @@ export function StockManagement() {
       }
     };
 
-    const usagesOnly = stockHistory.filter(h => h.type === 'usage' && !isJobHistoryOrphan(h));
+    const usagesOnly = stockHistory.filter(h => {
+      if (h.type !== 'usage' || isJobHistoryOrphan(h)) return false;
+      const stock = stocks.find(s => s.id === h.stockId);
+      if (!stock || stock.type !== 'paper') return false;
+
+      const isJobRelated = h.jobId || 
+        h.notes?.toLowerCase().includes('job created') || 
+        h.notes?.toLowerCase().includes('job updated') || 
+        h.notes?.toLowerCase().includes('job deducted') ||
+        h.notes?.toLowerCase().includes('stock deducted');
+
+      return !!isJobRelated;
+    });
 
     const augmentedUsages = usagesOnly.map(h => {
       const stock = stocks.find(s => s.id === h.stockId);
@@ -2089,35 +2145,6 @@ export function StockManagement() {
           </div>
         </div>
 
-        {/* Expenses Category Breakdown */}
-        {totalConsumptionValue > 0 && (
-          <div className="p-4 bg-gray-50/50 border border-gray-100 rounded-2xl">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">Estimated Material Value Consumed Breakdown</h4>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              {[
-                { label: 'Paper', val: typeBreakdown.paper, color: 'bg-blue-500' },
-                { label: 'Board', val: typeBreakdown.board, color: 'bg-amber-500' },
-                { label: 'Ink', val: typeBreakdown.ink, color: 'bg-purple-500' },
-                { label: 'Plates', val: typeBreakdown.plate, color: 'bg-emerald-500' },
-              ].map(item => {
-                const percentage = totalConsumptionValue > 0 ? (item.val / totalConsumptionValue) * 100 : 0;
-                return (
-                  <div key={item.label} className="space-y-1">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-gray-650 font-medium">{item.label}</span>
-                      <span className="font-mono text-gray-900 font-semibold font-mono">₹{item.val.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
-                    </div>
-                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                      <div className={`h-full ${item.color} rounded-full`} style={{ width: `${percentage}%` }}></div>
-                    </div>
-                    <p className="text-[10px] text-gray-400 font-mono text-right">{percentage.toFixed(1)}%</p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
         {/* Filters and Search Bar */}
         <div className="border-t border-gray-100 pt-6">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -2130,27 +2157,6 @@ export function StockManagement() {
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
                 />
-              </div>
-
-              <div className="flex items-center gap-2">
-                <div className="inline-flex bg-gray-100 p-0.5 rounded-lg text-xs">
-                  {[
-                    { value: 'all', label: 'All Items' },
-                    { value: 'paper', label: 'Paper' },
-                    { value: 'board', label: 'Board' },
-                    { value: 'ink', label: 'Ink' },
-                    { value: 'plate', label: 'Plates' }
-                  ].map(tab => (
-                    <button
-                      key={tab.value}
-                      type="button"
-                      onClick={() => setTypeFilter(tab.value as any)}
-                      className={`px-3 py-1.5 rounded-md transition-colors ${typeFilter === tab.value ? 'bg-white font-medium text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
               </div>
             </div>
 
@@ -2527,30 +2533,6 @@ export function StockManagement() {
                         <Label htmlFor="size" className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">Size</Label>
                         <Input id="size" placeholder="e.g. 23x36" className="rounded-xl border-gray-200 h-12" value={formData.size} onChange={e => setFormData({...formData, size: e.target.value})} required />
                       </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="unit" className="text-xs uppercase tracking-widest text-[#5A5A40] font-bold">Unit</Label>
-                        <Input id="unit" placeholder="e.g. Sheets" className="rounded-xl border-gray-200 h-12" value={formData.unit || 'Sheets'} onChange={e => setFormData({...formData, unit: e.target.value})} required />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="brand" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Brand (Optional)</Label>
-                        <Input id="brand" placeholder="e.g. Century" className="rounded-xl border-gray-200 h-12" value={formData.brand || ''} onChange={e => setFormData({...formData, brand: e.target.value})} />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="millName" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Mill Name (Optional)</Label>
-                        <Input id="millName" placeholder="e.g. JK Mill" className="rounded-xl border-gray-200 h-12" value={formData.millName || ''} onChange={e => setFormData({...formData, millName: e.target.value})} />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="shade" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Shade (Optional)</Label>
-                        <Input id="shade" placeholder="e.g. Blush Pink / Natural" className="rounded-xl border-gray-200 h-12" value={formData.shade || ''} onChange={e => setFormData({...formData, shade: e.target.value})} />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="notes" className="text-xs uppercase tracking-widest text-gray-400 font-bold">Notes (Optional)</Label>
-                      <Input id="notes" placeholder="Notes about stock..." className="rounded-xl border-gray-200 h-12" value={formData.notes || ''} onChange={e => setFormData({...formData, notes: e.target.value})} />
                     </div>
                   </>
                 )}

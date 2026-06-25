@@ -32,6 +32,7 @@ export interface JobItem {
 
 export interface Job {
   id: string;
+  jobNo?: number; // Sequential job code number starting from 1 (#0001)
   clientName: string;
   jobDescription: string;
   date: number;
@@ -155,4 +156,11 @@ export interface StockHistory {
   supplier?: string;
   invoiceNo?: string;
   jobId?: string;
+}
+
+export interface PartyOpeningBalance {
+  id: string; // clientName.toLowerCase().trim()
+  clientName: string;
+  openingBalance: number;
+  lastUpdated?: number;
 }

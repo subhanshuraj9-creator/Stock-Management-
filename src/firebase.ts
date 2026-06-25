@@ -1,11 +1,29 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, signOut, signInWithEmailAndPassword } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { 
+  initializeFirestore, 
+  persistentLocalCache, 
+  persistentMultipleTabManager,
+  doc, 
+  getDocFromServer 
+} from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+// Initialize Firestore with robust multi-tab persistent cache.
+// Serves reads from local cache first if they haven't changed,
+// significantly reducing Firestore quota reads and keeping the application
+// operational if Quota Exceeded error is encountered.
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager()
+  })
+}, firebaseConfig.firestoreDatabaseId);
+
 export const auth = getAuth(app);
+export const storage = getStorage(app);
 
 export enum OperationType {
   CREATE = 'create',
@@ -54,7 +72,24 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  const isQuota = errInfo.error.toLowerCase().includes('quota') || 
+                  errInfo.error.toLowerCase().includes('resource_exhausted') || 
+                  errInfo.error.toLowerCase().includes('free daily read units') || 
+                  errInfo.error.toLowerCase().includes('free tier database');
+
+  if (isQuota) {
+    console.warn('Firestore Quota Warning: ', JSON.stringify(errInfo));
+    if (operationType === OperationType.LIST || operationType === OperationType.GET) {
+      console.warn("Firestore Read Quota Exceeded. The application is running in multi-tab local cache mode fallback.");
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('firestore-quota-warning', { detail: errInfo }));
+      }
+      return; // Suppress & don't throw to prevent triggering ErrorBoundary, keeping cached data visible
+    }
+  } else {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+  }
+
   throw new Error(JSON.stringify(errInfo));
 }
 

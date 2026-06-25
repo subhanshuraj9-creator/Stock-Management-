@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { db, handleFirestoreError, OperationType, cleanUndefined, auth } from '../firebase';
-import { collection, onSnapshot, addDoc, query, orderBy, runTransaction, doc, writeBatch, getDocs, where } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, query, orderBy, runTransaction, doc, writeBatch, getDocs, where, getDocsFromServer } from 'firebase/firestore';
 import { Job, StockItem, JobItem, JointRun, JointRunAuditLog } from '../types';
+import { getJobCode } from '../lib/utils';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -9,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from './ui/dialog';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { Plus, Search, FileText, Calendar, User, Edit2, Trash2, Truck, Inbox, CheckCircle2, Download, Printer, ChevronDown } from 'lucide-react';
+import { Plus, Search, FileText, Calendar, User, Edit2, Trash2, Truck, Inbox, CheckCircle2, Download, Upload, RefreshCw, Printer, ChevronDown } from 'lucide-react';
 import { Badge } from './ui/badge';
 import { InvoiceModal } from './InvoiceModal';
 import { JobPreviewModal } from './JobPreviewModal';
@@ -519,10 +520,26 @@ export function JobManagement() {
   const [previewJob, setPreviewJob] = useState<Job | null>(null);
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
+  const [isDownloadingBackup, setIsDownloadingBackup] = useState(false);
+  const [isSyncingData, setIsSyncingData] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const jobs = useMemo(() => {
     return synchronizeJobsData(rawJobs, jointRuns);
   }, [rawJobs, jointRuns]);
+
+  const renderMasterJobSelectItems = () => {
+    const list = jobs.filter(j => j.isJoint && j.jointJobType === 'master');
+    if (list.length === 0) {
+      return <SelectItem value="none" disabled>No Master Joint Jobs found. Create a Master job first.</SelectItem>;
+    }
+    return list.map(mj => (
+      <SelectItem key={mj.id} value={mj.id}>
+        {mj.sharedRunId || 'JR???'} - {mj.clientName} ({mj.jobDescription}) [code: #{getJobCode(mj, rawJobs)}]
+      </SelectItem>
+    ));
+  };
 
   // Dispatch tracking states
   const [selectedJobForDispatch, setSelectedJobForDispatch] = useState<Job | null>(null);
@@ -548,6 +565,139 @@ export function JobManagement() {
       toast.error('Failed to clear jobs history');
     } finally {
       setIsClearing(false);
+    }
+  };
+
+  const handleDownloadBackup = async () => {
+    try {
+      setIsDownloadingBackup(true);
+      const backupData: Record<string, any[]> = {};
+
+      // Array of all system collections to back up
+      const collections = [
+        { name: 'jobs', localData: rawJobs },
+        { name: 'stocks', localData: stocks },
+        { name: 'jointRuns', localData: jointRuns },
+        { name: 'auditLogs', localData: auditLogs }
+      ];
+
+      for (const col of collections) {
+        try {
+          const snap = await getDocs(collection(db, col.name));
+          backupData[col.name] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        } catch (err) {
+          console.warn(`Remote fetch failed for ${col.name}, falling back to in-memory state.`, err);
+          if (col.localData && col.localData.length > 0) {
+            backupData[col.name] = col.localData;
+          } else {
+            backupData[col.name] = [];
+          }
+        }
+      }
+
+      // Fetch other collections that aren't monitored in this component
+      const remainingCols = ['payments', 'stockHistory'];
+      for (const colName of remainingCols) {
+        try {
+          const snap = await getDocs(collection(db, colName));
+          backupData[colName] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        } catch (err) {
+          console.warn(`Remote fetch failed for ${colName}`, err);
+          backupData[colName] = [];
+        }
+      }
+
+      // If everything returned empty/is empty, let the user know why
+      const totalRecords = Object.values(backupData).reduce((acc, arr) => acc + arr.length, 0);
+      if (totalRecords === 0) {
+        throw new Error("No data could be retrieved from Firestore because the Daily Quota has been exceeded. Please retry tomorrow once the quota resets.");
+      }
+
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `printstock_firestore_backup_${new Date().toISOString().slice(0, 10)}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      toast.success("Backup downloaded successfully!");
+    } catch (error: any) {
+      console.error("Backup failed", error);
+      toast.error(error.message || "Failed to download backup. Server limits exceeded.");
+    } finally {
+      setIsDownloadingBackup(false);
+    }
+  };
+
+  const handleImportBackup = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setIsImporting(true);
+      toast.loading("Parsing backup file...", { id: "import-toast" });
+
+      const text = await file.text();
+      const backupData = JSON.parse(text);
+
+      const supportedCollections = ['jobs', 'stocks', 'jointRuns', 'payments', 'stockHistory', 'jointRunAuditLogs', 'auditLogs'];
+      const hasAnyData = supportedCollections.some(col => Array.isArray(backupData[col]) && backupData[col].length > 0);
+
+      if (!hasAnyData) {
+        throw new Error("Invalid or empty backup file. Ensure it is a valid JSON backup exported from this system.");
+      }
+
+      toast.loading("Writing data packages to cloud database...", { id: "import-toast" });
+
+      for (const colName of supportedCollections) {
+        let records = backupData[colName];
+        if (!Array.isArray(records) || records.length === 0) continue;
+
+        const targetCol = colName === 'auditLogs' ? 'jointRunAuditLogs' : colName;
+
+        const chunks = [];
+        for (let i = 0; i < records.length; i += 400) {
+          chunks.push(records.slice(i, i + 400));
+        }
+
+        for (const chunk of chunks) {
+          const batch = writeBatch(db);
+          for (const item of chunk) {
+            if (!item.id) continue;
+            const { id, ...data } = item;
+            const docRef = doc(db, targetCol, id);
+            batch.set(docRef, cleanUndefined(data), { merge: true });
+          }
+          await batch.commit();
+        }
+      }
+
+      toast.success("All database packages successfully imported into your web app!", { id: "import-toast" });
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } catch (err: any) {
+      console.error("Backup restoration failed", err);
+      toast.error(err.message || "Could not restore backup file. Verify file format.", { id: "import-toast" });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleSyncCloudData = async () => {
+    try {
+      setIsSyncingData(true);
+      toast.loading("Pulling and synchronizing latest data from live Cloud server...", { id: "sync-toast" });
+
+      const collections = ['jobs', 'stocks', 'jointRuns', 'payments', 'stockHistory', 'jointRunAuditLogs'];
+      for (const colName of collections) {
+        await getDocsFromServer(query(collection(db, colName)));
+      }
+
+      toast.success("Database fully pulled and client state synchronized!", { id: "sync-toast" });
+    } catch (err: any) {
+      console.error("Force sync failed", err);
+      toast.error("Synchronized with active local cache. Cloud sync will continue in background.", { id: "sync-toast" });
+    } finally {
+      setIsSyncingData(false);
     }
   };
 
@@ -590,7 +740,7 @@ export function JobManagement() {
         return job.jointRef.trim().toUpperCase().replace('#', '');
       }
       if (job.id) {
-        return job.id.slice(-4).toUpperCase();
+        return getJobCode(job, rawJobs);
       }
     }
     return '';
@@ -714,7 +864,7 @@ export function JobManagement() {
       const hasRealRun = finalJointRuns.some(r => r.sharedRunId === runId);
       if (!hasRealRun) {
         const masterJob = group.find(j => j.jointJobType === 'master') || 
-                          group.find(j => j.id && j.id.slice(-4).toUpperCase() === runId) ||
+                          group.find(j => j.id && getJobCode(j, rawJobs) === runId) ||
                           group[0];
 
         if (masterJob) {
@@ -958,7 +1108,7 @@ export function JobManagement() {
 
   const applyJointRefAndAutoDetect = (refCode: string, items = formData.selectedItems, plates = formData.platesUsed) => {
     const cleanRef = refCode.trim().toUpperCase().replace('#', '');
-    const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+    const matchingJob = jobs.find(j => getJobCode(j, rawJobs) === cleanRef);
     
     // For joint jobs, we always want exactly one paper item in selectedItems
     let updatedItems = [...items];
@@ -1095,7 +1245,7 @@ export function JobManagement() {
 
   const applyRepeatRefAndAutoDetect = (refCode: string, items = formData.selectedItems, plates = formData.platesUsed) => {
     const cleanRef = refCode.trim().toUpperCase().replace('#', '');
-    const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+    const matchingJob = jobs.find(j => getJobCode(j, rawJobs) === cleanRef);
     
     let updatedPlates: any[] = [];
     let updatedItems = [...items];
@@ -1237,7 +1387,7 @@ export function JobManagement() {
     
     if (isJoint) {
       const cleanRef = refValue.trim().toUpperCase().replace('#', '');
-      const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+      const matchingJob = jobs.find(j => getJobCode(j, rawJobs) === cleanRef);
       const firstItem = formData.selectedItems[0];
       
       const updatedItems = [{
@@ -1336,7 +1486,7 @@ export function JobManagement() {
         quantityUsed: item.quantityUsed || 0, // default to parent's sheets used
         wastageSheets: item.wastageSheets || 0, // default to parent's wastage sheets
         isJoint: true,
-        paperRef: mj.id.slice(-4).toUpperCase()
+        paperRef: getJobCode(mj, rawJobs)
       }));
 
       // Set plates used
@@ -1344,7 +1494,7 @@ export function JobManagement() {
       const inheritedPlates = masterPlates.map(p => ({
         ...p,
         isJoint: true,
-        plateRef: mj.id.slice(-4).toUpperCase(),
+        plateRef: getJobCode(mj, rawJobs),
         isReused: true // Reused since Master pays or shares plates
       }));
 
@@ -1356,7 +1506,7 @@ export function JobManagement() {
         ...formData,
         jointParentId: masterJobId,
         sharedRunId: mj.sharedRunId || '',
-        jointRef: mj.id.slice(-4).toUpperCase(),
+        jointRef: getJobCode(mj, rawJobs),
         selectedItems: inheritedItems,
         platesUsed: inheritedPlates,
         orderedQuantity: autoProdQty
@@ -1375,7 +1525,7 @@ export function JobManagement() {
     // Auto-detect matching paper stock actual usage if this is a joint job and stock selection changes
     if ((formData as any).isJoint && (formData as any).jointRef && field === 'stockId' && value) {
       const cleanRef = (formData as any).jointRef.trim().toUpperCase().replace('#', '');
-      const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+      const matchingJob = jobs.find(j => getJobCode(j, rawJobs) === cleanRef);
       if (matchingJob) {
         const matchingItem = matchingJob.items?.find((it: any) => it.stockId === value);
         if (matchingItem) {
@@ -1487,7 +1637,7 @@ export function JobManagement() {
     // Auto-detect matching plate actual count if this is a joint job and plate selection changes
     if ((formData as any).isJoint && (formData as any).jointRef && field === 'plateId' && value) {
       const cleanRef = (formData as any).jointRef.trim().toUpperCase().replace('#', '');
-      const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+      const matchingJob = jobs.find(j => getJobCode(j, rawJobs) === cleanRef);
       if (matchingJob) {
         const matchingPlate = matchingJob.platesUsed?.find((pl: any) => pl.plateId === value);
         if (matchingPlate) {
@@ -1729,9 +1879,13 @@ export function JobManagement() {
           }
         }
 
+        const maxJobNo = rawJobs.reduce((max, j) => (j.jobNo && j.jobNo > max ? j.jobNo : max), 0);
+        const nextJobNo = maxJobNo > 0 ? maxJobNo + 1 : (rawJobs.length + 1);
+
         // 4. Create Job document in Firestore
         // Save only job-specific items/additional plates to avoid duplicating shared data in the database
         const jobDataToSave = {
+          jobNo: nextJobNo,
           clientName: formData.clientName,
           jobDescription: formData.jobDescription,
           date: jobDateTimestamp,
@@ -1926,7 +2080,7 @@ export function JobManagement() {
     const resolvedPlatesExport = [...(job.platesUsed || [])];
     if (job.isJoint && job.jointRef && jobs && jobs.length > 0) {
       const cleanRef = job.jointRef.trim().toUpperCase().replace('#', '');
-      const referencedJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+      const referencedJob = jobs.find(j => getJobCode(j, rawJobs) === cleanRef);
       if (referencedJob && referencedJob.platesUsed) {
         referencedJob.platesUsed.forEach(refPlate => {
           const isDuplicate = resolvedPlatesExport.some(p => p.plateId === refPlate.plateId);
@@ -2416,6 +2570,7 @@ export function JobManagement() {
         }
 
         const jobDataToSave = {
+          jobNo: editingJob.jobNo !== undefined ? editingJob.jobNo : undefined,
           clientName: formData.clientName,
           jobDescription: formData.jobDescription,
           items: formData.isJoint
@@ -2465,14 +2620,6 @@ export function JobManagement() {
           <p className="text-sm md:text-base text-gray-500 font-serif italic">Track and manage client orders</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
-          <Button
-            variant="outline"
-            className="border-amber-200 text-amber-700 hover:bg-amber-50 rounded-full h-12 md:h-10 px-4 flex items-center justify-center gap-2 w-full sm:w-auto shrink-0 font-medium"
-            onClick={() => setIsAuditLogsOpen(true)}
-          >
-            <FileText size={16} />
-            <span>Joint Run Audit Logs</span>
-          </Button>
           {jobs.length > 0 && (
             <Button
               variant="outline"
@@ -2525,6 +2672,7 @@ export function JobManagement() {
             <form onSubmit={handleAddJob} className="space-y-6 py-4">
               {/* UNIQUE_ADD_FORM_MARKER */}
               <div className="space-y-4">
+                {/* ADD_DLG_PROP */}
                 <div className="flex justify-between items-center px-1">
                   <span className="text-xs text-gray-400 font-medium font-mono uppercase tracking-widest">Job Setup</span>
                   <div className="flex items-center gap-1.5 bg-gray-50/50 px-2.5 py-1 rounded-xl border border-gray-100 shadow-3xs">
@@ -2685,15 +2833,7 @@ export function JobManagement() {
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectGroup>
-                                  {jobs.filter(j => j.isJoint && j.jointJobType === 'master').length === 0 ? (
-                                    <SelectItem value="none" disabled>No Master Joint Jobs found. Create a Master job first.</SelectItem>
-                                  ) : (
-                                    jobs.filter(j => j.isJoint && j.jointJobType === 'master').map(mj => (
-                                      <SelectItem key={mj.id} value={mj.id}>
-                                        {mj.sharedRunId || 'JR???'} - {mj.clientName} ({mj.jobDescription}) [code: #{mj.id.slice(-4).toUpperCase()}]
-                                      </SelectItem>
-                                    ))
-                                  )}
+                                  {renderMasterJobSelectItems()}
                                 </SelectGroup>
                               </SelectContent>
                             </Select>
@@ -2737,7 +2877,7 @@ export function JobManagement() {
                   
                   {(() => {
                     const cleanRef = (formData.repeatRef || '').trim().toUpperCase().replace('#', '');
-                    const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+                    const matchingJob = jobs.find(j => getJobCode(j, rawJobs) === cleanRef);
                     return (
                       <div className="text-xs bg-white p-4 rounded-xl border border-gray-100/80 space-y-2.5">
                         {matchingJob ? (
@@ -3364,18 +3504,22 @@ export function JobManagement() {
         </CardHeader>
         <CardContent className="p-0">
           <div className="divide-y divide-gray-50">
-            {filteredJobs.map((job) => (
+            {filteredJobs.map((job, index) => (
               <motion.div 
                 key={job.id}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                className="p-4 md:p-6 hover:bg-gray-50/50 transition-colors"
+                className={`p-4 md:p-6 transition-colors ${
+                  index % 2 === 0 
+                    ? 'bg-white hover:bg-[#5A5A40]/5' 
+                    : 'bg-[#5A5A40]/3 hover:bg-[#5A5A40]/8'
+                }`}
               >
                 <div className="flex flex-col lg:flex-row justify-between gap-6">
                   <div className="space-y-3 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline" className="font-mono text-[9px] md:text-[10px] uppercase tracking-wider text-gray-400 border-gray-200">
-                        Job #{job.id.slice(-4)}
+                      <Badge variant="outline" className="font-mono text-[9px] md:text-[10px] uppercase tracking-wider font-bold text-gray-400 border-gray-200">
+                        Job #{getJobCode(job, rawJobs)}
                       </Badge>
                       <span className="text-[10px] md:text-xs text-gray-400 flex items-center gap-1">
                         <Calendar size={12} />
@@ -3510,7 +3654,7 @@ export function JobManagement() {
                           const jobRef = job.jointRef || '';
                           const masterJob = jobs.find(j => 
                             (job.sharedRunId && j.sharedRunId === job.sharedRunId && j.jointJobType === 'master') ||
-                            (jobRef && j.id.slice(-4).toUpperCase() === jobRef.trim().toUpperCase().replace('#', ''))
+                            (jobRef && getJobCode(j, rawJobs) === jobRef.trim().toUpperCase().replace('#', ''))
                           );
                           const jointParentId = masterJob?.id || '';
 
@@ -3573,7 +3717,7 @@ export function JobManagement() {
                       const resolvedPlates = [...(job.platesUsed || [])];
                       if (job.isJoint && job.jointRef && jobs && jobs.length > 0) {
                         const cleanRef = job.jointRef.trim().toUpperCase().replace('#', '');
-                        const referencedJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+                        const referencedJob = jobs.find(j => getJobCode(j, rawJobs) === cleanRef);
                         if (referencedJob && referencedJob.platesUsed) {
                           referencedJob.platesUsed.forEach(refPlate => {
                             const isDuplicate = resolvedPlates.some(p => p.plateId === refPlate.plateId);
@@ -3602,8 +3746,8 @@ export function JobManagement() {
                               const linkedJobsForPaper = paperRef 
                                 ? jobs.filter(j => {
                                     if (j.id === job.id) return false;
-                                    const thisJobCode = job.id.slice(-4).toUpperCase();
-                                    const otherJobCode = j.id.slice(-4).toUpperCase();
+                                    const thisJobCode = getJobCode(job, rawJobs);
+                                    const otherJobCode = getJobCode(j, rawJobs);
                                     const cleanRef = paperRef.trim().toUpperCase().replace('#', '');
                                     
                                     // Check 1: The other job's paperRef matches this job's code
@@ -3651,7 +3795,7 @@ export function JobManagement() {
                                         {linkedJobsForPaper.map((lj, lidx) => (
                                           <div key={lidx} className="flex justify-between items-center py-0.5 border-b border-amber-200/40 last:border-0 text-amber-900">
                                             <span className="font-medium truncate mr-2">
-                                              #{lj.id.slice(-4).toUpperCase()} ({lj.clientName})
+                                              #{getJobCode(lj, rawJobs)} ({lj.clientName})
                                             </span>
                                             <span className="font-mono text-[9px] text-[#5A5A40] shrink-0 font-semibold">
                                               {lj.items?.filter(li => li.stockId === item.stockId).map(li => ((li.allocatedPaper !== undefined && li.allocatedPaper !== null) ? li.allocatedPaper : (li.quantityUsed ?? 0)).toLocaleString()).join(', ') || ((item.allocatedPaper !== undefined && item.allocatedPaper !== null) ? item.allocatedPaper : (item.quantityUsed ?? 0)).toLocaleString()} sheets
@@ -3668,7 +3812,7 @@ export function JobManagement() {
                               const resolvedPlatesList = [...(job.platesUsed || [])];
                               if (job.isJoint && job.jointRef && jobs && jobs.length > 0) {
                                 const cleanRef = job.jointRef.trim().toUpperCase().replace('#', '');
-                                const referencedJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+                                const referencedJob = jobs.find(j => getJobCode(j, rawJobs) === cleanRef);
                                 if (referencedJob && referencedJob.platesUsed) {
                                   referencedJob.platesUsed.forEach(refPlate => {
                                     const isDuplicate = resolvedPlatesList.some(p => p.plateId === refPlate.plateId);
@@ -3697,8 +3841,8 @@ export function JobManagement() {
                               const linkedJobs = plateRef 
                                 ? jobs.filter(j => {
                                     if (j.id === job.id) return false;
-                                    const thisJobCode = job.id.slice(-4).toUpperCase();
-                                    const otherJobCode = j.id.slice(-4).toUpperCase();
+                                    const thisJobCode = getJobCode(job, rawJobs);
+                                    const otherJobCode = getJobCode(j, rawJobs);
                                     const cleanRef = plateRef.trim().toUpperCase().replace('#', '');
                                     
                                     // Check 1: The other job's plateRef matches this job's code
@@ -3751,8 +3895,8 @@ export function JobManagement() {
                                           const matchingPlates = lj.platesUsed?.filter(lp => {
                                             const lpRef = (lp.plateRef || '').trim().toUpperCase().replace('#', '');
                                             const thisRef = (plateRef || '').trim().toUpperCase().replace('#', '');
-                                            const thisJobCode = job.id.slice(-4).toUpperCase();
-                                            const otherJobCode = lj.id.slice(-4).toUpperCase();
+                                            const thisJobCode = getJobCode(job, rawJobs);
+                                            const otherJobCode = getJobCode(lj, rawJobs);
                                             
                                             const sharesThis = lpRef === thisJobCode;
                                             const thisSharesOther = thisRef === otherJobCode;
@@ -3867,7 +4011,7 @@ export function JobManagement() {
                         const resolvedPlatesListForShared = [...(job.platesUsed || [])];
                         if (job.isJoint && job.jointRef && jobs && jobs.length > 0) {
                           const cleanRef = job.jointRef.trim().toUpperCase().replace('#', '');
-                          const referencedJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+                          const referencedJob = jobs.find(j => getJobCode(j, rawJobs) === cleanRef);
                           if (referencedJob && referencedJob.platesUsed) {
                             referencedJob.platesUsed.forEach(refPlate => {
                               const isDuplicate = resolvedPlatesListForShared.some(p => p.plateId === refPlate.plateId);
@@ -4195,15 +4339,7 @@ export function JobManagement() {
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectGroup>
-                                  {jobs.filter(j => j.isJoint && j.jointJobType === 'master').length === 0 ? (
-                                    <SelectItem value="none" disabled>No Master Joint Jobs found. Create a Master job first.</SelectItem>
-                                  ) : (
-                                    jobs.filter(j => j.isJoint && j.jointJobType === 'master').map(mj => (
-                                      <SelectItem key={mj.id} value={mj.id}>
-                                        {mj.sharedRunId || 'JR???'} - {mj.clientName} ({mj.jobDescription}) [code: #{mj.id.slice(-4).toUpperCase()}]
-                                      </SelectItem>
-                                    ))
-                                  )}
+                                  {renderMasterJobSelectItems()}
                                 </SelectGroup>
                               </SelectContent>
                             </Select>
@@ -4247,7 +4383,7 @@ export function JobManagement() {
                   
                   {(() => {
                     const cleanRef = (formData.repeatRef || '').trim().toUpperCase().replace('#', '');
-                    const matchingJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+                    const matchingJob = jobs.find(j => getJobCode(j, rawJobs) === cleanRef);
                     return (
                       <div className="text-xs bg-white p-4 rounded-xl border border-gray-100/80 space-y-2.5">
                         {matchingJob ? (
@@ -5134,8 +5270,8 @@ export function JobManagement() {
 
    <datalist id="active-jobs-list">
         {jobs.map(j => (
-          <option key={j.id} value={j.id.slice(-4).toUpperCase()}>
-            {`Job #${j.id.slice(-4).toUpperCase()} — ${j.clientName} (${j.jobDescription})`}
+          <option key={j.id} value={getJobCode(j, rawJobs)}>
+            {`Job #${getJobCode(j, rawJobs)} — ${j.clientName} (${j.jobDescription})`}
           </option>
         ))}
       </datalist>

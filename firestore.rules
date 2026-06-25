@@ -96,11 +96,12 @@ service cloud.firestore {
 
     function isValidJob(data) {
       return hasRequiredFields(data, ['clientName', 'jobDescription', 'date', 'items']) &&
-             hasOnlyAllowedFields(data, ['clientName', 'jobDescription', 'date', 'items', 'platesUsed', 'processCharges', 'orderedQuantity', 'dispatches', 'dispatchStatus', 'isJoint', 'jointRef', 'jointJobType', 'sharedRunId', 'jointParentId', 'previewImage', 'lamination', 'isRepeat', 'repeatRef', 'paperBillingMethod', 'paperBillingRate', 'paperBillingAmount', 'additionalCharges']) &&
+             hasOnlyAllowedFields(data, ['jobNo', 'clientName', 'jobDescription', 'date', 'items', 'platesUsed', 'processCharges', 'orderedQuantity', 'dispatches', 'dispatchStatus', 'isJoint', 'jointRef', 'jointJobType', 'sharedRunId', 'jointParentId', 'previewImage', 'lamination', 'isRepeat', 'repeatRef', 'paperBillingMethod', 'paperBillingRate', 'paperBillingAmount', 'additionalCharges']) &&
              data.clientName is string && data.clientName.size() >= 1 &&
              data.jobDescription is string && data.jobDescription.size() >= 1 &&
              data.date is number &&
              data.items is list &&
+             (!('jobNo' in data) || data.jobNo is number) &&
              (!('platesUsed' in data) || (data.platesUsed is list)) &&
              (!('processCharges' in data) || (data.processCharges is list)) &&
              (!('orderedQuantity' in data) || data.orderedQuantity == null || (data.orderedQuantity is number && data.orderedQuantity >= 0)) &&
@@ -193,6 +194,14 @@ service cloud.firestore {
              data.timestamp is number;
     }
 
+    function isValidPartyOpeningBalance(data) {
+      return hasRequiredFields(data, ['clientName', 'openingBalance']) &&
+             hasOnlyAllowedFields(data, ['clientName', 'openingBalance', 'lastUpdated']) &&
+             data.clientName is string && data.clientName.size() >= 1 &&
+             data.openingBalance is number &&
+             (!('lastUpdated' in data) || data.lastUpdated is number);
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -255,6 +264,13 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidJointRunAuditLog(request.resource.data);
       allow update: if isAuthenticated() && isValidJointRunAuditLog(request.resource.data);
+      allow delete: if isAuthenticated();
+    }
+
+    match /partyOpeningBalances/{id} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidPartyOpeningBalance(request.resource.data);
+      allow update: if isAuthenticated() && isValidPartyOpeningBalance(request.resource.data);
       allow delete: if isAuthenticated();
     }
 
