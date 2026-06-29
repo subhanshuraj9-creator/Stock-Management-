@@ -10,6 +10,7 @@ import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
 import { Printer, Upload, X, Image as ImageIcon, Loader2, FileImage, ClipboardCheck, ArrowRight, TableProperties } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import { getJobCode } from '../lib/utils';
 
 interface JobPreviewModalProps {
   isOpen: boolean;
@@ -73,11 +74,11 @@ export function JobPreviewModal({ isOpen, onClose, job: initialJob, stocks, jobs
       const isJobJoint = !!job.isJoint || job.items?.some(i => i.isJoint) || (job.platesUsed || []).some(p => p.isJoint);
       const jobRefCode = job.jointRef || job.items?.find(i => i.isJoint)?.paperRef || (job.platesUsed || []).find(p => p.isJoint)?.plateRef || '';
       const cleanRef = jobRefCode.trim().toUpperCase().replace('#', '');
-      const currentJobCode = job.id.slice(-4).toUpperCase();
+      const currentJobCode = getJobCode(job, jobs);
 
       // A. Check if there's a referenced master/parent job
       if (cleanRef) {
-        const parent = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+        const parent = jobs.find(j => getJobCode(j, jobs) === cleanRef);
         if (parent?.previewImage) {
           return { image: parent.previewImage, sourceJob: parent, isShared: true, sharedFromCode: cleanRef };
         }
@@ -92,7 +93,7 @@ export function JobPreviewModal({ isOpen, onClose, job: initialJob, stocks, jobs
       });
 
       if (childWithImage?.previewImage) {
-        return { image: childWithImage.previewImage, sourceJob: childWithImage, isShared: true, sharedFromCode: childWithImage.id.slice(-4).toUpperCase() };
+        return { image: childWithImage.previewImage, sourceJob: childWithImage, isShared: true, sharedFromCode: getJobCode(childWithImage, jobs) };
       }
 
       // C. Check if there's any other sibling job in the same joint group (same jointRef/paperRef/plateRef) that has a preview image
@@ -104,7 +105,7 @@ export function JobPreviewModal({ isOpen, onClose, job: initialJob, stocks, jobs
           return refClean === cleanRef && j.previewImage;
         });
         if (siblingWithImage?.previewImage) {
-          return { image: siblingWithImage.previewImage, sourceJob: siblingWithImage, isShared: true, sharedFromCode: siblingWithImage.id.slice(-4).toUpperCase() };
+          return { image: siblingWithImage.previewImage, sourceJob: siblingWithImage, isShared: true, sharedFromCode: getJobCode(siblingWithImage, jobs) };
         }
       }
     }
@@ -174,19 +175,12 @@ export function JobPreviewModal({ isOpen, onClose, job: initialJob, stocks, jobs
           const compressedBase64 = canvas.toDataURL('image/jpeg', 0.82);
 
           try {
-            const blobFile = dataURLToBlob(compressedBase64);
-            const storagePath = `jobs/${job.id}_artwork.jpg`;
-            const imageRef = ref(storage, storagePath);
-
-            await uploadBytes(imageRef, blobFile, { contentType: 'image/jpeg' });
-            const downloadUrl = await getDownloadURL(imageRef);
-
             const jobRef = doc(db, 'jobs', job.id);
-            await updateDoc(jobRef, { previewImage: downloadUrl });
-            toast.success('Artwork preview uploaded successfully!');
+            await updateDoc(jobRef, { previewImage: compressedBase64 });
+            toast.success('Artwork preview updated successfully!');
           } catch (err: any) {
-            console.error('Firebase Storage upload failed: ', err);
-            toast.error(err.message || 'Failed to upload artwork preview to Firebase Storage. Please make sure the Storage rules are deployed.');
+            console.error('Firestore save failed: ', err);
+            toast.error(err.message || 'Failed to save artwork preview to Firestore.');
           } finally {
             setIsUploading(false);
           }
@@ -374,7 +368,7 @@ export function JobPreviewModal({ isOpen, onClose, job: initialJob, stocks, jobs
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-gray-50/50 p-3 rounded-lg border border-gray-100 text-xs print-no-bg">
                       <div className="space-y-0.5">
                         <span className="text-[9px] uppercase tracking-wider text-gray-400 font-bold">Job Code</span>
-                        <p className="font-mono font-bold text-gray-900 text-sm">#{job.id.slice(-4).toUpperCase()}</p>
+                        <p className="font-mono font-bold text-gray-900 text-sm">#{getJobCode(job, jobs)}</p>
                       </div>
                       <div className="space-y-0.5">
                         <span className="text-[9px] uppercase tracking-wider text-gray-400 font-bold">Entry Date</span>
@@ -657,7 +651,7 @@ export function JobPreviewModal({ isOpen, onClose, job: initialJob, stocks, jobs
                             <div className="min-w-0">
                               <p className="text-xs font-serif font-bold text-amber-950 truncate flex items-center gap-1">
                                 <FileImage size={13} className="text-emerald-600" />
-                                Art_Proof_#{resolvedPreview.sourceJob.id.slice(-4).toUpperCase()}.jpg
+                                Art_Proof_#{getJobCode(resolvedPreview.sourceJob, jobs)}.jpg
                               </p>
                               <p className="text-[10px] text-emerald-600 font-bold">
                                 {resolvedPreview.isShared ? '✓ Shared from linked joint job' : '✓ Attached directly to job'}

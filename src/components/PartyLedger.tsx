@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Plus, Search, BookOpen, IndianRupee, ArrowDownCircle, ArrowUpCircle, Trash2, Calendar, FileText, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
+import { getJobCode } from '../lib/utils';
 import { format } from 'date-fns';
 
 const ACCENT_COLORS: Record<string, { primary: string; light: string; border: string }> = {
@@ -40,14 +41,14 @@ const LAYOUT_THEMES: Record<string, { fontFamily: string; bodyFont: string }> = 
   }
 };
 
-function getJobRunId(job: any): string {
+function getJobRunId(job: any, allJobs?: any[]): string {
   if (job.sharedRunId) return job.sharedRunId.trim().toUpperCase();
   if (job.isJoint) {
     if (job.jointRef) {
       return job.jointRef.trim().toUpperCase().replace('#', '');
     }
     if (job.id) {
-      return job.id.slice(-4).toUpperCase();
+      return getJobCode(job, allJobs);
     }
   }
   return '';
@@ -114,7 +115,7 @@ function synchronizeJobsData(allJobs: any[], allJointRuns: JointRun[]): any[] {
   // 2. Identify modern and legacy groups
   const runIdToGroupJobs = new Map<string, any[]>();
   jobsWithResolvedJoints.forEach(job => {
-    const runId = getJobRunId(job);
+    const runId = getJobRunId(job, allJobs);
     if (runId) {
       if (!runIdToGroupJobs.has(runId)) {
         runIdToGroupJobs.set(runId, []);
@@ -128,7 +129,7 @@ function synchronizeJobsData(allJobs: any[], allJointRuns: JointRun[]): any[] {
     const hasRealRun = allJointRuns.some(r => r.sharedRunId === runId);
     if (!hasRealRun) {
       const masterJob = group.find(j => j.jointJobType === 'master') || 
-                        group.find(j => j.id && j.id.slice(-4).toUpperCase() === runId) ||
+                        group.find(j => j.id && getJobCode(j, allJobs) === runId) ||
                         group[0];
 
       if (masterJob) {
@@ -933,7 +934,7 @@ export function PartyLedger() {
 
       if (job.isJoint && job.jointRef) {
         const cleanRef = job.jointRef.trim().toUpperCase().replace('#', '');
-        const referencedJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+        const referencedJob = jobs.find(j => getJobCode(j, jobs) === cleanRef);
         if (referencedJob && referencedJob.platesUsed) {
           referencedJob.platesUsed.filter(p => !p.isCancelled).forEach(refPlate => {
             const isDuplicate = platesToProcess.some(p => p.plateId === refPlate.plateId);

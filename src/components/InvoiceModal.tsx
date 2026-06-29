@@ -7,6 +7,7 @@ import { Input } from './ui/input';
 import { Printer, Download, FileText, Check, Settings, Eye, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import { getJobCode } from '../lib/utils';
 
 interface InvoiceModalProps {
   isOpen: boolean;
@@ -172,7 +173,7 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
     const list = [...(job.platesUsed || [])];
     if (job.isJoint && job.jointRef && jobs && jobs.length > 0) {
       const cleanRef = job.jointRef.trim().toUpperCase().replace('#', '');
-      const referencedJob = jobs.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+      const referencedJob = jobs.find(j => getJobCode(j, jobs) === cleanRef);
       if (referencedJob && referencedJob.platesUsed) {
         referencedJob.platesUsed.filter(p => !p.isCancelled).forEach(refPlate => {
           const isDuplicate = list.some(p => p.plateId === refPlate.plateId);
@@ -1129,7 +1130,7 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
               <div>
                 <div class="block-label">Print Job Item Particulars</div>
                 <div style="font-size: 15px; font-weight: 600; color:#2d3748;">${job.jobDescription}</div>
-                <div class="job-desc">Press Job ID #${job.id.slice(-4).toUpperCase()}</div>
+                <div class="job-desc">Press Job ID #${getJobCode(job, jobs)}</div>
               </div>
             </div>
 
@@ -1394,7 +1395,7 @@ export function InvoiceModal({ isOpen, onClose, job, stocks, jobs = [] }: Invoic
               <div>
                 <span className="text-[9px] uppercase tracking-wider text-gray-400 block font-sans font-bold">Job Particulars:</span>
                 <span className="font-semibold text-gray-800 italic block mt-0.5">"{job.jobDescription}"</span>
-                <p className="font-mono text-[9px] text-gray-400 mt-0.5">JobID: {job.id.slice(-4).toUpperCase()}</p>
+                <p className="font-mono text-[9px] text-gray-400 mt-0.5">JobID: {getJobCode(job, jobs)}</p>
               </div>
             </div>
 

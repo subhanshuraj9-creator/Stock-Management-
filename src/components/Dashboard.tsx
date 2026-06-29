@@ -9,15 +9,16 @@ import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
 import { Button } from './ui/button';
 import { toast } from 'sonner';
+import { getJobCode } from '../lib/utils';
 
-function getJobRunId(job: any): string {
+function getJobRunId(job: any, allJobs?: any[]): string {
   if (job.sharedRunId) return job.sharedRunId.trim().toUpperCase();
   if (job.isJoint) {
     if (job.jointRef) {
       return job.jointRef.trim().toUpperCase().replace('#', '');
     }
     if (job.id) {
-      return job.id.slice(-4).toUpperCase();
+      return getJobCode(job, allJobs);
     }
   }
   return '';
@@ -84,7 +85,7 @@ function synchronizeJobsData(allJobs: any[], allJointRuns: JointRun[]): any[] {
   // 2. Identify modern and legacy groups
   const runIdToGroupJobs = new Map<string, any[]>();
   jobsWithResolvedJoints.forEach(job => {
-    const runId = getJobRunId(job);
+    const runId = getJobRunId(job, allJobs);
     if (runId) {
       if (!runIdToGroupJobs.has(runId)) {
         runIdToGroupJobs.set(runId, []);
@@ -98,7 +99,7 @@ function synchronizeJobsData(allJobs: any[], allJointRuns: JointRun[]): any[] {
     const hasRealRun = allJointRuns.some(r => r.sharedRunId === runId);
     if (!hasRealRun) {
       const masterJob = group.find(j => j.jointJobType === 'master') || 
-                        group.find(j => j.id && j.id.slice(-4).toUpperCase() === runId) ||
+                        group.find(j => j.id && getJobCode(j, allJobs) === runId) ||
                         group[0];
 
       if (masterJob) {
@@ -310,7 +311,7 @@ export function Dashboard() {
 
     if (job.isJoint && job.jointRef) {
       const cleanRef = job.jointRef.trim().toUpperCase().replace('#', '');
-      const referencedJob = jobsList.find(j => j.id.slice(-4).toUpperCase() === cleanRef);
+      const referencedJob = jobsList.find(j => getJobCode(j, jobsList) === cleanRef);
       if (referencedJob && referencedJob.platesUsed) {
         referencedJob.platesUsed.forEach(refPlate => {
           const isDuplicate = platesToProcess.some(p => p.plateId === refPlate.plateId);
@@ -483,6 +484,9 @@ export function Dashboard() {
           icon={<AlertTriangle className="text-amber-600" />}
           color="bg-amber-50"
           highlight={totalLowStock > 0}
+          onClick={() => {
+            document.getElementById('low-stock-items')?.scrollIntoView({ behavior: 'smooth' });
+          }}
         />
         <StatCard 
           title="To Be Dispatched" 
@@ -490,6 +494,9 @@ export function Dashboard() {
           subtitle="Jobs awaiting complete delivery"
           icon={<Truck className="text-purple-600" />}
           color="bg-purple-50"
+          onClick={() => {
+            document.getElementById('jobs-to-dispatch')?.scrollIntoView({ behavior: 'smooth' });
+          }}
         />
       </div>
 
@@ -730,7 +737,7 @@ export function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
-        <Card className="lg:col-span-2 border-none shadow-sm bg-white rounded-[24px] md:rounded-[32px] overflow-hidden">
+        <Card id="jobs-to-dispatch" className="lg:col-span-2 border-none shadow-sm bg-white rounded-[24px] md:rounded-[32px] overflow-hidden scroll-mt-44 md:scroll-mt-48">
           <CardHeader className="p-6 md:p-8 border-b border-gray-50 flex flex-row items-center justify-between">
             <CardTitle className="font-serif text-lg md:text-xl flex items-center gap-2">
               <Truck size={20} className="text-[#5A5A40]" />
@@ -754,7 +761,7 @@ export function Dashboard() {
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-bold uppercase">
-                            #{job.id.slice(-4).toUpperCase()}
+                            #{getJobCode(job, allJobs)}
                           </span>
                           <p className="font-medium text-gray-900 truncate">{job.clientName}</p>
                         </div>
@@ -801,7 +808,7 @@ export function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="border-none shadow-sm bg-white rounded-[24px] md:rounded-[32px] overflow-hidden">
+        <Card id="low-stock-items" className="border-none shadow-sm bg-white rounded-[24px] md:rounded-[32px] overflow-hidden scroll-mt-44 md:scroll-mt-48">
           <CardHeader className="p-6 md:p-8 border-b border-gray-50">
             <CardTitle className="font-serif text-lg md:text-xl flex items-center gap-2">
               <AlertTriangle size={20} className="text-amber-500" />
@@ -924,10 +931,15 @@ export function Dashboard() {
   );
 }
 
-function StatCard({ title, value, subtitle, icon, color, highlight = false }: any) {
+function StatCard({ title, value, subtitle, icon, color, highlight = false, onClick }: any) {
   return (
-    <motion.div whileHover={{ y: -4 }} transition={{ duration: 0.2 }}>
-      <Card className={`border-none shadow-sm rounded-[20px] md:rounded-[24px] overflow-hidden ${highlight ? 'ring-2 ring-amber-500/20' : ''}`}>
+    <motion.div 
+      whileHover={{ y: -4 }} 
+      transition={{ duration: 0.2 }}
+      onClick={onClick}
+      className={onClick ? "cursor-pointer" : ""}
+    >
+      <Card className={`border-none shadow-sm rounded-[20px] md:rounded-[24px] overflow-hidden ${highlight ? 'ring-2 ring-amber-500/20' : ''} ${onClick ? 'hover:shadow-md transition-all active:scale-[0.98]' : ''}`}>
         <CardContent className="p-4 md:p-6">
           <div className="flex justify-between items-start mb-2 md:mb-4">
             <div className={`w-10 h-10 md:w-12 md:h-12 rounded-xl md:rounded-2xl ${color} flex items-center justify-center`}>
