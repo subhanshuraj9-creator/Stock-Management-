@@ -164,3 +164,13 @@ export interface PartyOpeningBalance {
   openingBalance: number;
   lastUpdated?: number;
 }
+
+export interface Expense {
+  id: string;
+  title: string;
+  amount: number;
+  date: number;
+  category?: string;
+  notes?: string;
+}
+

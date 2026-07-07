@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, onSnapshot, addDoc, query, orderBy, deleteDoc, doc, writeBatch, setDoc } from 'firebase/firestore';
 import { Job, StockItem, Payment, JointRun, PartyOpeningBalance } from '../types';
+import { useFirebaseData } from '../contexts/FirebaseDataContext';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -216,11 +217,13 @@ function synchronizeJobsData(allJobs: any[], allJointRuns: JointRun[]): any[] {
 }
 
 export function PartyLedger() {
-  const [rawJobs, setRawJobs] = useState<Job[]>([]);
-  const [jointRuns, setJointRuns] = useState<JointRun[]>([]);
-  const [stocks, setStocks] = useState<StockItem[]>([]);
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [partyOpeningBalances, setPartyOpeningBalances] = useState<PartyOpeningBalance[]>([]);
+  const {
+    jobs: rawJobs,
+    jointRuns,
+    stocks,
+    payments,
+    partyOpeningBalances,
+  } = useFirebaseData();
   const [isOpeningBalanceOpen, setIsOpeningBalanceOpen] = useState(false);
   const [openingBalanceForm, setOpeningBalanceForm] = useState({
     amount: '',
@@ -402,6 +405,11 @@ export function PartyLedger() {
         </td>
         <td style="padding: 7px 12px; font-size: 11.5px; color: #1a202c;">
           <div style="font-weight: 600; color: #2d3748;">${tr.title}</div>
+          ${tr.details && tr.details.length > 0 ? `
+            <div style="font-size: 9.5px; color: #718096; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px;">
+              ${tr.details.map(d => `<span style="background-color: #f7fafc; border: 1px solid #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 8.5px; font-family: sans-serif; white-space: normal;">${d}</span>`).join('')}
+            </div>
+          ` : ''}
         </td>
         <td style="padding: 7px 12px; text-align: right; font-family: monospace; font-size: 11.5px; color: #e53e3e; font-weight: 500;">
           ${tr.type === 'debit' ? `₹${tr.amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
@@ -724,56 +732,6 @@ export function PartyLedger() {
     notes: ''
   });
 
-  useEffect(() => {
-    const jobsQ = query(collection(db, 'jobs'), orderBy('date', 'desc'));
-    const unsubscribeJobs = onSnapshot(jobsQ, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job));
-      setRawJobs(items);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'jobs');
-    });
-
-    const jointRunsQ = query(collection(db, 'jointRuns'));
-    const unsubscribeJointRuns = onSnapshot(jointRunsQ, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JointRun));
-      setJointRuns(items);
-    }, (error) => {
-      // ignore
-    });
-
-    const stocksQ = query(collection(db, 'stocks'));
-    const unsubscribeStocks = onSnapshot(stocksQ, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StockItem));
-      setStocks(items);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'stocks');
-    });
-
-    const paymentsQ = query(collection(db, 'payments'), orderBy('date', 'desc'));
-    const unsubscribePayments = onSnapshot(paymentsQ, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Payment));
-      setPayments(items);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'payments');
-    });
-
-    const partyBalancesQ = query(collection(db, 'partyOpeningBalances'));
-    const unsubscribePartyBalances = onSnapshot(partyBalancesQ, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PartyOpeningBalance));
-      setPartyOpeningBalances(items);
-    }, (error) => {
-      // ignore
-    });
-
-    return () => {
-      unsubscribeJobs();
-      unsubscribeJointRuns();
-      unsubscribeStocks();
-      unsubscribePayments();
-      unsubscribePartyBalances();
-    };
-  }, []);
-
   // Gather unique parties
   const uniqueParties = Array.from(new Set([
     ...jobs.map(j => j.clientName.trim()),
@@ -910,20 +868,13 @@ export function PartyLedger() {
         const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
         if (sheetsUsed > 0) {
           const stock = stocks.find(s => s.id === item.stockId);
-          paperDetails.push(`${stock?.name || 'Stock'} (${sheetsUsed.toLocaleString()} shs)`);
+          paperDetails.push(`${stock?.name || 'Stock'}`);
         }
       });
 
       // Add detail about the billing rate / method if custom billing was set
       if (job.paperBillingMethod) {
-        const methodLabels: Record<string, string> = {
-          ream: 'Reams',
-          '100sheets': '100 sheets',
-          gross: 'Gross',
-          custom: 'Custom'
-        };
-        const methodLabel = methodLabels[job.paperBillingMethod] || job.paperBillingMethod;
-        paperDetails.push(`Paper Billing (${methodLabel} @ ₹${(job.paperBillingRate || 0).toFixed(2)}): ₹${paperTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+        paperDetails.push(`Paper Billing: ₹${paperTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
       } else if (paperTotal > 0) {
         paperDetails.push(`Paper Materials Total: ₹${paperTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
       }
@@ -956,7 +907,7 @@ export function PartyLedger() {
           const stock = stocks.find(s => s.id === plate.plateId);
           const isAdditional = (job.isJoint || (job.jointRef && job.jointRef.trim() !== '')) && !plate.isJoint && !plate.isJointRef;
           const label = isAdditional ? `${stock?.name || 'Plate'} (Addl.)` : (stock?.name || 'Plate');
-          plateDetails.push(`${label} (${plate.count}): ₹${plateCost.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`);
+          plateDetails.push(`${label}: ₹${plateCost.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`);
         }
       });
 
@@ -1537,6 +1488,15 @@ export function PartyLedger() {
                             <TableCell className="py-3 md:py-4">
                               <div className="flex flex-col">
                                 <span className="text-gray-800 font-semibold text-xs md:text-sm">{tr.title}</span>
+                                {tr.details && tr.details.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-1.5 max-w-xl">
+                                    {tr.details.map((detail, idx) => (
+                                      <span key={idx} className="inline-flex items-center text-[10px] text-gray-500 bg-gray-50 border border-gray-200/50 rounded-md px-2 py-0.5 font-sans leading-tight">
+                                        {detail}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             </TableCell>
                             <TableCell className="text-right font-mono text-xs md:text-sm text-red-600">
@@ -1621,6 +1581,15 @@ export function PartyLedger() {
                               </span>
                             </div>
                             <h4 className="text-sm font-semibold text-gray-800 mt-1.5 break-words leading-snug">{tr.title}</h4>
+                            {tr.details && tr.details.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1.5">
+                                {tr.details.map((detail, idx) => (
+                                  <span key={idx} className="inline-flex items-center text-[9px] text-gray-500 bg-gray-50 border border-gray-200/50 rounded-md px-1.5 py-0.5 font-sans leading-tight">
+                                    {detail}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                           
                           <div className="text-right shrink-0">

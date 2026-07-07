@@ -246,9 +246,26 @@
         "lastUpdated": { "type": "number" }
       },
       "required": ["clientName", "openingBalance"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Represents an business expense incurred, tracked monthly.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "Short description of the expense" },
+        "amount": { "type": "number", "description": "Expense amount" },
+        "date": { "type": "number", "format": "timestamp", "description": "Date of expense" },
+        "category": { "type": "string", "description": "Category of the expense (e.g. rent, salaries, ink, paper, etc.)" },
+        "notes": { "type": "string", "description": "Additional notes" }
+      },
+      "required": ["title", "amount", "date"]
     }
   },
   "firestore": {
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Collection of monthly business expenses"
+    },
     "/stocks/{stockId}": {
       "schema": "StockItem",
       "description": "Collection of stock materials (paper, board, ink, and plates)"

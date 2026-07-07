@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, query, orderBy, onSnapshot, getDocs, writeBatch } from 'firebase/firestore';
-import { StockItem, Job, Payment, StockHistory, JointRun } from '../types';
+import { collection, query, orderBy, onSnapshot, getDocs, writeBatch, doc, addDoc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { StockItem, Job, Payment, StockHistory, JointRun, Expense } from '../types';
+import { useFirebaseData } from '../contexts/FirebaseDataContext';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { Package, FileText, AlertTriangle, TrendingUp, Clock, ArrowRight, Trash2, Truck, IndianRupee, ArrowUpRight, BarChart3, TrendingDown } from 'lucide-react';
+import { Package, FileText, AlertTriangle, TrendingUp, Clock, ArrowRight, Trash2, Truck, IndianRupee, ArrowUpRight, BarChart3, TrendingDown, Plus, Edit, PlusCircle, Calendar, Receipt } from 'lucide-react';
 import { motion } from 'motion/react';
 import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
@@ -185,16 +186,54 @@ function synchronizeJobsData(allJobs: any[], allJointRuns: JointRun[]): any[] {
   return jobsWithResolvedJoints;
 }
 
+const CATEGORY_COLORS: Record<string, string> = {
+  'Salaries & Wages': 'bg-blue-50 text-blue-700 border-blue-100',
+  'Rent & Lease': 'bg-purple-50 text-purple-700 border-purple-100',
+  'Electricity & Power': 'bg-amber-50 text-amber-700 border-amber-100',
+  'Machine Maintenance': 'bg-orange-50 text-orange-700 border-orange-100',
+  'Transport & Logistics': 'bg-sky-50 text-sky-700 border-sky-100',
+  'Printing plates / Raw materials': 'bg-emerald-50 text-emerald-700 border-emerald-100',
+  'Office Supplies': 'bg-gray-50 text-gray-700 border-gray-100',
+  'Miscellaneous / Others': 'bg-slate-50 text-slate-750 border-slate-150',
+};
+
+const EXPENSE_CATEGORIES = [
+  'Salaries & Wages',
+  'Rent & Lease',
+  'Electricity & Power',
+  'Machine Maintenance',
+  'Transport & Logistics',
+  'Printing plates / Raw materials',
+  'Office Supplies',
+  'Miscellaneous / Others'
+];
+
 export function Dashboard() {
-  const [stocks, setStocks] = useState<StockItem[]>([]);
-  const [rawJobs, setRawJobs] = useState<Job[]>([]);
-  const [jointRuns, setJointRuns] = useState<JointRun[]>([]);
-  const [payments, setPayments] = useState<Payment[]>([]);
+  const {
+    stocks,
+    jobs: rawJobs,
+    jointRuns,
+    payments,
+    stockHistory: history,
+    expenses,
+  } = useFirebaseData();
 
   const allJobs = React.useMemo(() => {
     return synchronizeJobsData(rawJobs, jointRuns);
   }, [rawJobs, jointRuns]);
-  const [history, setHistory] = useState<StockHistory[]>([]);
+  const [isExpenseDialogOpen, setIsExpenseDialogOpen] = useState(false);
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+  const [expenseForm, setExpenseForm] = useState({
+    title: '',
+    amount: '',
+    date: format(new Date(), 'yyyy-MM-dd'),
+    category: 'Miscellaneous / Others',
+    notes: ''
+  });
+  const [selectedExpenseMonth, setSelectedExpenseMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
 
@@ -215,47 +254,6 @@ export function Dashboard() {
       setIsClearing(false);
     }
   };
-
-  useEffect(() => {
-    const stocksUnsubscribe = onSnapshot(collection(db, 'stocks'), (snapshot) => {
-      setStocks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StockItem)));
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'stocks');
-    });
-
-    const jobsQ = query(collection(db, 'jobs'), orderBy('date', 'desc'));
-    const jobsUnsubscribe = onSnapshot(jobsQ, (snapshot) => {
-      setRawJobs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job)));
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'jobs');
-    });
-
-    const jointRunsUnsubscribe = onSnapshot(collection(db, 'jointRuns'), (snapshot) => {
-      setJointRuns(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JointRun)));
-    }, (error) => {
-      // ignore
-    });
-
-    const paymentsUnsubscribe = onSnapshot(collection(db, 'payments'), (snapshot) => {
-      setPayments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Payment)));
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'payments');
-    });
-
-    const historyUnsubscribe = onSnapshot(collection(db, 'stockHistory'), (snapshot) => {
-      setHistory(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StockHistory)));
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'stockHistory');
-    });
-
-    return () => {
-      stocksUnsubscribe();
-      jobsUnsubscribe();
-      jointRunsUnsubscribe();
-      paymentsUnsubscribe();
-      historyUnsubscribe();
-    };
-  }, []);
 
   // Accounting helpers
   const parsePaperSize = (sizeStr: string | undefined): { width: number; length: number } | null => {
@@ -419,7 +417,7 @@ export function Dashboard() {
   }, [history]);
 
   const monthlyRevenueList = React.useMemo(() => {
-    const revenueData: { [key: string]: { revenue: number; collections: number } } = {};
+    const revenueData: { [key: string]: { revenue: number; collections: number; expenses: number } } = {};
 
     allJobs.forEach(job => {
       const totalDebit = computeJobDebit(job, allJobs, stocks);
@@ -427,7 +425,7 @@ export function Dashboard() {
       const key = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
 
       if (!revenueData[key]) {
-        revenueData[key] = { revenue: 0, collections: 0 };
+        revenueData[key] = { revenue: 0, collections: 0, expenses: 0 };
       }
       revenueData[key].revenue += totalDebit;
     });
@@ -437,9 +435,20 @@ export function Dashboard() {
       const key = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
 
       if (!revenueData[key]) {
-        revenueData[key] = { revenue: 0, collections: 0 };
+        revenueData[key] = { revenue: 0, collections: 0, expenses: 0 };
       }
       revenueData[key].collections += p.amount;
+    });
+
+    // Manual custom expenses
+    expenses.forEach(exp => {
+      const dateObj = new Date(exp.date);
+      const key = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
+
+      if (!revenueData[key]) {
+        revenueData[key] = { revenue: 0, collections: 0, expenses: 0 };
+      }
+      revenueData[key].expenses += Number(exp.amount) || 0;
     });
 
     const sortedKeys = Object.keys(revenueData).sort();
@@ -452,12 +461,20 @@ export function Dashboard() {
         key,
         monthName,
         revenue: revenueData[key].revenue,
-        collections: revenueData[key].collections
+        collections: revenueData[key].collections,
+        expenses: revenueData[key].expenses || 0,
       };
     });
-  }, [allJobs, payments, stocks]);
+  }, [allJobs, payments, stocks, expenses]);
 
   const totalOutstandingMarketValue = partyOutstandingList.reduce((sum, p) => sum + p.outstanding, 0);
+
+  const currentMonthExpenses = React.useMemo(() => {
+    const now = new Date();
+    const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const monthlyRecord = monthlyRevenueList.find(m => m.key === currentMonthKey);
+    return monthlyRecord ? monthlyRecord.expenses : 0;
+  }, [monthlyRevenueList]);
 
   const totalSheets = stocks.filter(s => s.type === 'paper' || s.type === 'board').reduce((acc, s) => acc + s.quantity, 0);
   
@@ -468,6 +485,91 @@ export function Dashboard() {
   
   const totalLowStock = lowPaper.length + lowBoard.length + lowInk.length + lowPlates.length;
   const pendingJobs = allJobs.filter(job => job.dispatchStatus !== 'completed');
+
+  // Dynamic Month List for Expense Filter dropdown
+  const expenseMonthsList = React.useMemo(() => {
+    const monthKeys = new Set<string>();
+    
+    // Add current month and last 12 months
+    const today = new Date();
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      monthKeys.add(key);
+    }
+    
+    // Add any months from expenses
+    expenses.forEach(e => {
+      const d = new Date(e.date);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      monthKeys.add(key);
+    });
+
+    return Array.from(monthKeys).sort().reverse().map(key => {
+      const [year, month] = key.split('-');
+      const label = format(new Date(parseInt(year), parseInt(month) - 1, 1), 'MMMM yyyy');
+      return { key, label };
+    });
+  }, [expenses]);
+
+  // Filter custom expenses list for the selected month
+  const filteredExpenses = React.useMemo(() => {
+    return expenses.filter(e => {
+      const d = new Date(e.date);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      return key === selectedExpenseMonth;
+    }).sort((a, b) => b.date - a.date);
+  }, [expenses, selectedExpenseMonth]);
+
+  const selectedMonthGeneralTotal = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
+
+  // Firebase operation handlers
+  const handleSaveExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!expenseForm.title || !expenseForm.amount || !expenseForm.date) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
+
+    const payload = {
+      title: expenseForm.title.trim(),
+      amount: Number(expenseForm.amount),
+      date: new Date(expenseForm.date).getTime(),
+      category: expenseForm.category,
+      notes: expenseForm.notes.trim()
+    };
+
+    try {
+      if (editingExpense) {
+        await updateDoc(doc(db, 'expenses', editingExpense.id), payload);
+        toast.success('Expense updated successfully');
+      } else {
+        await addDoc(collection(db, 'expenses'), payload);
+        toast.success('Expense logged successfully');
+      }
+      setIsExpenseDialogOpen(false);
+      setEditingExpense(null);
+      setExpenseForm({
+        title: '',
+        amount: '',
+        date: format(new Date(), 'yyyy-MM-dd'),
+        category: 'Miscellaneous / Others',
+        notes: ''
+      });
+    } catch (error) {
+      handleFirestoreError(error, editingExpense ? OperationType.UPDATE : OperationType.CREATE, 'expenses');
+    }
+  };
+
+  const handleDeleteExpense = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this expense record?')) return;
+    try {
+      await deleteDoc(doc(db, 'expenses', id));
+      toast.success('Expense record deleted successfully');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, 'expenses');
+    }
+  };
 
   return (
     <div className="space-y-6 md:space-y-8">
@@ -529,7 +631,7 @@ export function Dashboard() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <CardTitle className="font-serif text-lg md:text-xl flex items-center gap-2.5">
                   <ArrowUpRight size={22} className="text-emerald-600" />
-                  Monthly Ledger Revenue vs Collections
+                  Monthly Ledger Revenue, Collections & Expenses
                 </CardTitle>
                 <div className="flex items-center gap-3 text-[10px] sm:text-xs">
                   <div className="flex items-center gap-1.5 font-medium text-gray-600">
@@ -540,14 +642,18 @@ export function Dashboard() {
                     <span className="w-2.5 h-2.5 rounded-full bg-sky-500" />
                     <span>Collected (Payments)</span>
                   </div>
+                  <div className="flex items-center gap-1.5 font-medium text-gray-600">
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                    <span>Expenses</span>
+                  </div>
                 </div>
               </div>
-              <p className="text-xs text-gray-400 font-serif italic mt-1">Comparison of overall billed printing jobs versus payments collected</p>
+              <p className="text-xs text-gray-400 font-serif italic mt-1">Comparison of overall billed printing jobs, payments collected, and operational/stock expenses</p>
             </CardHeader>
             <CardContent className="p-6 pt-2">
               {monthlyRevenueList.length === 0 ? (
                 <div className="h-64 flex items-center justify-center text-gray-400 font-serif italic text-sm">
-                  No billing or receipt activity loaded to plot.
+                  No billing, receipt, or expense activity loaded to plot.
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -560,16 +666,17 @@ export function Dashboard() {
 
                     {monthlyRevenueList.map((item, index) => {
                       const maxVal = Math.max(
-                        ...monthlyRevenueList.map(m => Math.max(m.revenue, m.collections)),
+                        ...monthlyRevenueList.map(m => Math.max(m.revenue, m.collections, m.expenses)),
                         1000
                       );
                       const revPercent = (item.revenue / maxVal) * 100;
                       const colPercent = (item.collections / maxVal) * 100;
+                      const expPercent = (item.expenses / maxVal) * 100;
 
                       return (
                         <div key={item.key} className="flex-1 flex flex-col items-center justify-end h-full group relative">
                           {/* Tooltip */}
-                          <div className="absolute bottom-full mb-2 bg-slate-900 text-white text-[10px] md:text-xs font-mono font-bold py-2.5 px-3 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none shadow-xl z-20 text-left min-w-[170px] border border-slate-800">
+                          <div className="absolute bottom-full mb-2 bg-slate-900 text-white text-[10px] md:text-xs font-mono font-bold py-2.5 px-3 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none shadow-xl z-20 text-left min-w-[190px] border border-slate-800">
                             <div className="font-serif italic font-medium pb-1.5 border-b border-slate-800 text-gray-300">{item.monthName}</div>
                             <div className="text-emerald-400 pt-1.5 flex justify-between gap-4">
                               <span>Revenue:</span>
@@ -579,14 +686,18 @@ export function Dashboard() {
                               <span>Payments:</span>
                               <span>₹{item.collections.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
                             </div>
+                            <div className="text-rose-400 mt-1 flex justify-between gap-4">
+                              <span>Expenses:</span>
+                              <span>₹{item.expenses.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+                            </div>
                           </div>
 
                           {/* Columns */}
-                          <div className="flex items-end gap-1.5 w-full h-full max-w-[50px]">
+                          <div className="flex items-end gap-1 w-full h-full max-w-[64px]">
                             {/* Revenue column */}
-                            <div className="flex-1 h-full bg-emerald-50 rounded-t-lg overflow-hidden flex items-end">
+                            <div className="flex-1 h-full bg-emerald-50 rounded-t-md overflow-hidden flex items-end">
                               <motion.div 
-                                className="w-full bg-gradient-to-t from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 rounded-t-lg shadow-2xs transition-all"
+                                className="w-full bg-gradient-to-t from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 rounded-t-md shadow-2xs transition-all"
                                 style={{ height: `${revPercent}%` }}
                                 initial={{ height: 0 }}
                                 animate={{ height: `${revPercent}%` }}
@@ -595,13 +706,24 @@ export function Dashboard() {
                             </div>
                             
                             {/* Collection column */}
-                            <div className="flex-1 h-full bg-sky-50 rounded-t-lg overflow-hidden flex items-end">
+                            <div className="flex-1 h-full bg-sky-50 rounded-t-md overflow-hidden flex items-end">
                               <motion.div 
-                                className="w-full bg-gradient-to-t from-sky-400 to-sky-500 hover:from-sky-500 hover:to-sky-600 rounded-t-lg shadow-2xs transition-all"
+                                className="w-full bg-gradient-to-t from-sky-400 to-sky-500 hover:from-sky-500 hover:to-sky-600 rounded-t-md shadow-2xs transition-all"
                                 style={{ height: `${colPercent}%` }}
                                 initial={{ height: 0 }}
                                 animate={{ height: `${colPercent}%` }}
-                                transition={{ duration: 0.8, delay: index * 0.05 + 0.03 }}
+                                transition={{ duration: 0.8, delay: index * 0.05 + 0.02 }}
+                              />
+                            </div>
+
+                            {/* Expenses column */}
+                            <div className="flex-1 h-full bg-rose-50 rounded-t-md overflow-hidden flex items-end">
+                              <motion.div 
+                                className="w-full bg-gradient-to-t from-rose-400 to-rose-500 hover:from-rose-500 hover:to-rose-600 rounded-t-md shadow-2xs transition-all"
+                                style={{ height: `${expPercent}%` }}
+                                initial={{ height: 0 }}
+                                animate={{ height: `${expPercent}%` }}
+                                transition={{ duration: 0.8, delay: index * 0.05 + 0.04 }}
                               />
                             </div>
                           </div>
@@ -734,6 +856,160 @@ export function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Business Expenses Tracker */}
+      <Card id="business-expenses-tracker" className="border-none shadow-sm bg-white rounded-[24px] overflow-hidden scroll-mt-44 md:scroll-mt-48 mt-8">
+        <CardHeader className="p-6 pb-2 border-b border-gray-50 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <CardTitle className="font-serif text-lg md:text-xl flex items-center gap-2.5">
+              <Receipt size={22} className="text-[#5A5A40]" />
+              Business Operational Expenses Ledger
+            </CardTitle>
+            <p className="text-xs text-gray-400 font-serif italic mt-0.5">
+              Manage and track salaries, rent, utility bills, and other printing press overhead costs
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Month Filter Selector */}
+            <select
+              className="bg-gray-50 border border-gray-200 rounded-full px-4 h-10 text-xs font-semibold text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#5A5A40] focus:border-[#5A5A40] transition-colors cursor-pointer"
+              value={selectedExpenseMonth}
+              onChange={(e) => setSelectedExpenseMonth(e.target.value)}
+            >
+              {expenseMonthsList.map(item => (
+                <option key={item.key} value={item.key}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+
+            {/* Add Expense Button */}
+            <Button
+              onClick={() => {
+                setEditingExpense(null);
+                setExpenseForm({
+                  title: '',
+                  amount: '',
+                  date: format(new Date(), 'yyyy-MM-dd'),
+                  category: 'Miscellaneous / Others',
+                  notes: ''
+                });
+                setIsExpenseDialogOpen(true);
+              }}
+              className="rounded-full bg-[#5A5A40] text-white hover:bg-[#4a4a34] font-semibold h-10 text-xs flex items-center gap-1.5"
+            >
+              <Plus size={15} />
+              Add Expense
+            </Button>
+          </div>
+        </CardHeader>
+
+        <CardContent className="p-6 space-y-6">
+          {/* Monthly Expenditure Summary Cards */}
+          <div className="p-5 bg-[#5A5A40]/5 border border-[#5A5A40]/10 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <span className="text-[10px] uppercase font-bold tracking-wider text-[#5A5A40]/80 font-mono">Total Selected Month Expenses</span>
+              <p className="text-2xl md:text-3xl font-bold text-gray-900 font-mono mt-1">
+                ₹{selectedMonthGeneralTotal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              </p>
+            </div>
+            <div className="text-xs text-gray-500 font-serif italic sm:text-right">
+              Based on {filteredExpenses.length} logged expense transaction{filteredExpenses.length === 1 ? '' : 's'}
+            </div>
+          </div>
+
+          {/* Expenses Table */}
+          {filteredExpenses.length === 0 ? (
+            <div className="py-12 text-center text-gray-400 font-serif italic text-sm border border-dashed border-gray-150 rounded-2xl bg-gray-50/50">
+              No general operational expenses logged for this month. 
+              <button 
+                onClick={() => {
+                  setEditingExpense(null);
+                  setExpenseForm({
+                    title: '',
+                    amount: '',
+                    date: format(new Date(), 'yyyy-MM-dd'),
+                    category: 'Miscellaneous / Others',
+                    notes: ''
+                  });
+                  setIsExpenseDialogOpen(true);
+                }}
+                className="text-[#5A5A40] hover:underline font-bold ml-1"
+              >
+                Add your first expense
+              </button>
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-gray-100 bg-white">
+              <table className="w-full text-left border-collapse text-xs md:text-sm">
+                <thead>
+                  <tr className="bg-gray-50/75 border-b border-gray-100 text-[10px] font-bold uppercase tracking-wider text-gray-500">
+                    <th className="p-4">Date</th>
+                    <th className="p-4">Expense Title</th>
+                    <th className="p-4">Category</th>
+                    <th className="p-4">Notes</th>
+                    <th className="p-4 text-right">Amount</th>
+                    <th className="p-4 text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {filteredExpenses.map((exp) => (
+                    <tr key={exp.id} className="hover:bg-gray-50/25 transition-colors">
+                      <td className="p-4 font-mono font-medium text-gray-600">
+                        {format(new Date(exp.date), 'dd MMM yyyy')}
+                      </td>
+                      <td className="p-4 font-medium text-gray-900">
+                        {exp.title}
+                      </td>
+                      <td className="p-4">
+                        <span className={`inline-block px-2.5 py-1 text-[10px] font-bold rounded-full border ${CATEGORY_COLORS[exp.category || 'Miscellaneous / Others']}`}>
+                          {exp.category || 'Miscellaneous / Others'}
+                        </span>
+                      </td>
+                      <td className="p-4 text-gray-500 max-w-[200px] truncate italic font-serif">
+                        {exp.notes || '—'}
+                      </td>
+                      <td className="p-4 text-right font-mono font-bold text-gray-900 text-base">
+                        ₹{exp.amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                      </td>
+                      <td className="p-4 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setEditingExpense(exp);
+                              setExpenseForm({
+                                title: exp.title,
+                                amount: exp.amount.toString(),
+                                date: format(new Date(exp.date), 'yyyy-MM-dd'),
+                                category: exp.category || 'Miscellaneous / Others',
+                                notes: exp.notes || ''
+                              });
+                              setIsExpenseDialogOpen(true);
+                            }}
+                            className="h-8 w-8 text-gray-400 hover:text-amber-600 rounded-full"
+                          >
+                            <Edit size={14} />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDeleteExpense(exp.id)}
+                            className="h-8 w-8 text-gray-400 hover:text-red-600 rounded-full"
+                          >
+                            <Trash2 size={14} />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
@@ -924,6 +1200,120 @@ export function Dashboard() {
                 {isClearing ? 'Clearing...' : 'Clear Activity'}
               </Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Expense Modal Dialog */}
+      {isExpenseDialogOpen && (
+        <Dialog open={isExpenseDialogOpen} onOpenChange={(open) => {
+          if (!open) {
+            setIsExpenseDialogOpen(false);
+            setEditingExpense(null);
+          }
+        }}>
+          <DialogContent className="sm:max-w-[480px] rounded-[32px] max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="font-serif text-2xl flex items-center gap-2">
+                <Receipt className="text-[#5A5A40]" />
+                {editingExpense ? 'Edit Expense Record' : 'Log New Expense'}
+              </DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleSaveExpense} className="space-y-4 py-4">
+              {/* Expense Title */}
+              <div className="space-y-1.5">
+                <label htmlFor="expense-title" className="text-[11px] uppercase tracking-wider text-gray-500 font-bold block">Title / Purpose *</label>
+                <input
+                  id="expense-title"
+                  required
+                  placeholder="e.g. Office Rent, June Salaries, Electricity Bill"
+                  value={expenseForm.title}
+                  onChange={(e) => setExpenseForm(prev => ({ ...prev, title: e.target.value }))}
+                  className="w-full bg-white border border-gray-200 rounded-xl px-4 h-11 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#5A5A40] focus:border-[#5A5A40]"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                {/* Amount */}
+                <div className="space-y-1.5">
+                  <label htmlFor="expense-amount" className="text-[11px] uppercase tracking-wider text-gray-500 font-bold block">Amount (₹) *</label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-semibold">₹</span>
+                    <input
+                      id="expense-amount"
+                      type="number"
+                      min="0.01"
+                      step="any"
+                      required
+                      placeholder="0.00"
+                      value={expenseForm.amount}
+                      onChange={(e) => setExpenseForm(prev => ({ ...prev, amount: e.target.value }))}
+                      className="w-full bg-white border border-gray-200 rounded-xl pl-8 pr-4 h-11 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#5A5A40] focus:border-[#5A5A40] font-mono font-bold"
+                    />
+                  </div>
+                </div>
+
+                {/* Date */}
+                <div className="space-y-1.5">
+                  <label htmlFor="expense-date" className="text-[11px] uppercase tracking-wider text-gray-500 font-bold block">Transaction Date *</label>
+                  <input
+                    id="expense-date"
+                    type="date"
+                    required
+                    value={expenseForm.date}
+                    onChange={(e) => setExpenseForm(prev => ({ ...prev, date: e.target.value }))}
+                    className="w-full bg-white border border-gray-200 rounded-xl px-4 h-11 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#5A5A40] focus:border-[#5A5A40]"
+                  />
+                </div>
+              </div>
+
+              {/* Category */}
+              <div className="space-y-1.5">
+                <label htmlFor="expense-category" className="text-[11px] uppercase tracking-wider text-gray-500 font-bold block">Category *</label>
+                <select
+                  id="expense-category"
+                  value={expenseForm.category}
+                  onChange={(e) => setExpenseForm(prev => ({ ...prev, category: e.target.value }))}
+                  className="w-full bg-white border border-gray-200 rounded-xl px-4 h-11 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-[#5A5A40] focus:border-[#5A5A40] cursor-pointer"
+                >
+                  {EXPENSE_CATEGORIES.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Notes */}
+              <div className="space-y-1.5">
+                <label htmlFor="expense-notes" className="text-[11px] uppercase tracking-wider text-gray-500 font-bold block">Notes / Reference</label>
+                <textarea
+                  id="expense-notes"
+                  placeholder="Invoice number, payment method details, or extra notes..."
+                  value={expenseForm.notes}
+                  onChange={(e) => setExpenseForm(prev => ({ ...prev, notes: e.target.value }))}
+                  className="w-full bg-white border border-gray-200 rounded-xl p-3 text-sm text-gray-700 h-20 focus:outline-none focus:ring-1 focus:ring-[#5A5A40] focus:border-[#5A5A40] resize-none"
+                />
+              </div>
+
+              <DialogFooter className="pt-4 gap-2 sm:gap-0">
+                <Button 
+                  type="button" 
+                  variant="ghost" 
+                  onClick={() => {
+                    setIsExpenseDialogOpen(false);
+                    setEditingExpense(null);
+                  }} 
+                  className="rounded-full"
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  type="submit" 
+                  className="rounded-full bg-[#5A5A40] text-white hover:bg-[#4a4a34] px-8 font-semibold"
+                >
+                  {editingExpense ? 'Save Changes' : 'Log Expense'}
+                </Button>
+              </DialogFooter>
+            </form>
           </DialogContent>
         </Dialog>
       )}

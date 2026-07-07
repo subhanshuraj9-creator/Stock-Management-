@@ -201,6 +201,16 @@ service cloud.firestore {
              (!('lastUpdated' in data) || data.lastUpdated is number);
     }
 
+    function isValidExpense(data) {
+      return hasRequiredFields(data, ['title', 'amount', 'date']) &&
+             hasOnlyAllowedFields(data, ['id', 'title', 'amount', 'date', 'category', 'notes']) &&
+             data.title is string && data.title.size() >= 1 &&
+             data.amount is number &&
+             data.date is number &&
+             (!('category' in data) || data.category == null || data.category is string) &&
+             (!('notes' in data) || data.notes == null || data.notes is string);
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -270,6 +280,13 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidPartyOpeningBalance(request.resource.data);
       allow update: if isAuthenticated() && isValidPartyOpeningBalance(request.resource.data);
+      allow delete: if isAuthenticated();
+    }
+
+    match /expenses/{expenseId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidExpense(request.resource.data);
+      allow update: if isAuthenticated() && isValidExpense(request.resource.data);
       allow delete: if isAuthenticated();
     }
 

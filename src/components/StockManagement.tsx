@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType, cleanUndefined } from '../firebase';
 import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, query, orderBy, runTransaction, writeBatch, getDocs, where } from 'firebase/firestore';
 import { StockItem, StockType, InkUsage, StockHistory } from '../types';
+import { useFirebaseData } from '../contexts/FirebaseDataContext';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -51,12 +52,16 @@ const getDefaultPlatesPerPacket = (sizeStr: string | undefined): number => {
 };
 
 export function StockManagement() {
-  const [stocks, setStocks] = useState<StockItem[]>([]);
-  const [inkUsages, setInkUsages] = useState<InkUsage[]>([]);
-  const [stockHistory, setStockHistory] = useState<StockHistory[]>([]);
-  const [jobs, setJobs] = useState<any[]>([]);
-  const [jobsLoaded, setJobsLoaded] = useState(false);
-  const [stockHistoryLoaded, setStockHistoryLoaded] = useState(false);
+  const {
+    stocks,
+    inkUsages,
+    stockHistory,
+    jobs,
+    jobsLoaded,
+    historyLoaded: stockHistoryLoaded,
+    paperSections,
+    boardSections,
+  } = useFirebaseData();
   const [isHistClearOpen, setIsHistClearOpen] = useState(false);
   const [histClearType, setHistClearType] = useState<StockType | null>(null);
   const [isHistClearing, setIsHistClearing] = useState(false);
@@ -94,14 +99,12 @@ export function StockManagement() {
 
   const [activeTab, setActiveTab] = useState('paper');
   const [selectedPaperType, setSelectedPaperType] = useState('all');
-  const [paperSections, setPaperSections] = useState<{ id: string, name: string }[]>([]);
   const [isManageSectionsOpen, setIsManageSectionsOpen] = useState(false);
   const [newSectionName, setNewSectionName] = useState('');
   const [isAddingNewSectInline, setIsAddingNewSectInline] = useState(false);
   const [newSectInlineName, setNewSectInlineName] = useState('');
 
   const [selectedBoardType, setSelectedBoardType] = useState('all');
-  const [boardSections, setBoardSections] = useState<{ id: string, name: string }[]>([]);
   const [isManageBoardSectionsOpen, setIsManageBoardSectionsOpen] = useState(false);
   const [newBoardSectionName, setNewBoardSectionName] = useState('');
   
@@ -177,66 +180,7 @@ export function StockManagement() {
     notes: ''
   });
 
-  useEffect(() => {
-    const q = query(collection(db, 'stocks'), orderBy('lastUpdated', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StockItem));
-      setStocks(items);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'stocks');
-    });
-
-    const usageQ = query(collection(db, 'inkUsage'), orderBy('date', 'desc'));
-    const unsubscribeUsage = onSnapshot(usageQ, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as InkUsage));
-      setInkUsages(items);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'inkUsage');
-    });
-
-    const historyQ = query(collection(db, 'stockHistory'), orderBy('date', 'desc'));
-    const unsubscribeHistory = onSnapshot(historyQ, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StockHistory));
-      setStockHistory(items);
-      setStockHistoryLoaded(true);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'stockHistory');
-    });
-
-    const jobsQ = query(collection(db, 'jobs'), orderBy('date', 'desc'));
-    const unsubscribeJobs = onSnapshot(jobsQ, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-      setJobs(items);
-      setJobsLoaded(true);
-    }, (error) => {
-      console.error('Error listening to jobs:', error);
-    });
-
-    const sectionsQ = query(collection(db, 'paperSections'), orderBy('name', 'asc'));
-    const unsubscribeSections = onSnapshot(sectionsQ, (snapshot) => {
-      const sects = snapshot.docs.map(doc => ({ id: doc.id, name: doc.data().name as string }));
-      setPaperSections(sects);
-    }, (error) => {
-      console.error('Error listening to paperSections:', error);
-    });
-
-    const boardSectionsQ = query(collection(db, 'boardSections'), orderBy('name', 'asc'));
-    const unsubscribeBoardSections = onSnapshot(boardSectionsQ, (snapshot) => {
-      const sects = snapshot.docs.map(doc => ({ id: doc.id, name: doc.data().name as string }));
-      setBoardSections(sects);
-    }, (error) => {
-      console.error('Error listening to boardSections:', error);
-    });
-
-    return () => {
-      unsubscribe();
-      unsubscribeUsage();
-      unsubscribeHistory();
-      unsubscribeJobs();
-      unsubscribeSections();
-      unsubscribeBoardSections();
-    };
-  }, []);
+  // Subscriptions handled globally via FirebaseDataProvider
 
   // Helper to determine if a stockHistory item belongs to a deleted job
   const isJobHistoryOrphan = (h: StockHistory) => {

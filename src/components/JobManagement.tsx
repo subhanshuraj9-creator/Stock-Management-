@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { db, handleFirestoreError, OperationType, cleanUndefined, auth } from '../firebase';
 import { collection, onSnapshot, addDoc, query, orderBy, runTransaction, doc, writeBatch, getDocs, where, getDocsFromServer } from 'firebase/firestore';
 import { Job, StockItem, JobItem, JointRun, JointRunAuditLog } from '../types';
+import { useFirebaseData } from '../contexts/FirebaseDataContext';
 import { getJobCode } from '../lib/utils';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -507,11 +508,13 @@ const loadProcessChargesForEditing = (job: Job) => {
 };
 
 export function JobManagement() {
-  const [rawJobs, setRawJobs] = useState<Job[]>([]);
-  const [jointRuns, setJointRuns] = useState<JointRun[]>([]);
-  const [auditLogs, setAuditLogs] = useState<JointRunAuditLog[]>([]);
+  const {
+    jobs: rawJobs,
+    jointRuns,
+    auditLogs,
+    stocks,
+  } = useFirebaseData();
   const [isAuditLogsOpen, setIsAuditLogsOpen] = useState(false);
-  const [stocks, setStocks] = useState<StockItem[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
@@ -1034,47 +1037,7 @@ export function JobManagement() {
     JSON.stringify(jointRuns)
   ]);
 
-  useEffect(() => {
-    const jobsQ = query(collection(db, 'jobs'), orderBy('date', 'desc'));
-    const unsubscribeJobs = onSnapshot(jobsQ, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Job));
-      setRawJobs(items);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'jobs');
-    });
-
-    const stocksQ = query(collection(db, 'stocks'));
-    const unsubscribeStocks = onSnapshot(stocksQ, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as StockItem));
-      setStocks(items);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'stocks');
-    });
-
-    const jointRunsQ = query(collection(db, 'jointRuns'));
-    const unsubscribeJointRuns = onSnapshot(jointRunsQ, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JointRun));
-      setJointRuns(items);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'jointRuns');
-    });
-
-    const auditLogsQ = query(collection(db, 'jointRunAuditLogs'));
-    const unsubscribeAuditLogs = onSnapshot(auditLogsQ, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JointRunAuditLog));
-      const sorted = [...items].sort((a, b) => b.timestamp - a.timestamp);
-      setAuditLogs(sorted);
-    }, (error) => {
-      console.warn("Audit logs error: ", error);
-    });
-
-    return () => {
-      unsubscribeJobs();
-      unsubscribeStocks();
-      unsubscribeJointRuns();
-      unsubscribeAuditLogs();
-    };
-  }, []);
+  // Subscriptions handled globally via FirebaseDataProvider
 
   const handleAddItem = () => {
     const isJoint = !!(formData as any).isJoint;
