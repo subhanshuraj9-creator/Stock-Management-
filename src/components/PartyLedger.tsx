@@ -256,6 +256,11 @@ export function PartyLedger() {
     return saved !== null ? saved === 'true' : true;
   });
 
+  const [showDetailedLedger, setShowDetailedLedger] = useState<boolean>(() => {
+    const saved = localStorage.getItem('pdf_show_detailed_ledger');
+    return saved !== null ? saved === 'true' : true;
+  });
+
   const [pressDetails, setPressDetails] = useState(() => {
     const saved = localStorage.getItem('press_details');
     if (saved) {
@@ -349,7 +354,7 @@ export function PartyLedger() {
       const dateStr = format(new Date(t.date), 'dd-MM-yy');
       const typeStr = t.type === 'debit' ? 'JOB BILL' : 'RECEIPT';
       const titleEscaped = t.title.replace(/"/g, '""');
-      const detailsJoin = (t.details || []).join(' | ').replace(/"/g, '""');
+      const detailsJoin = showDetailedLedger ? (t.details || []).join(' | ').replace(/"/g, '""') : '';
       const fullTitle = detailsJoin ? `${titleEscaped} (${detailsJoin})` : titleEscaped;
       const debitStr = t.type === 'debit' ? t.amount.toFixed(2) : '-';
       const creditStr = t.type === 'credit' ? t.amount.toFixed(2) : '-';
@@ -405,7 +410,7 @@ export function PartyLedger() {
         </td>
         <td style="padding: 7px 12px; font-size: 11.5px; color: #1a202c;">
           <div style="font-weight: 600; color: #2d3748;">${tr.title}</div>
-          ${tr.details && tr.details.length > 0 ? `
+          ${showDetailedLedger && tr.details && tr.details.length > 0 ? `
             <div style="font-size: 9.5px; color: #718096; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px;">
               ${tr.details.map(d => `<span style="background-color: #f7fafc; border: 1px solid #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 8.5px; font-family: sans-serif; white-space: normal;">${d}</span>`).join('')}
             </div>
@@ -868,15 +873,14 @@ export function PartyLedger() {
         const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
         if (sheetsUsed > 0) {
           const stock = stocks.find(s => s.id === item.stockId);
-          paperDetails.push(`${stock?.name || 'Stock'}`);
+          if (stock?.name) {
+            paperDetails.push(`Paper: ${stock.name}`);
+          }
         }
       });
 
-      // Add detail about the billing rate / method if custom billing was set
-      if (job.paperBillingMethod) {
+      if (paperTotal > 0) {
         paperDetails.push(`Paper Billing: ₹${paperTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
-      } else if (paperTotal > 0) {
-        paperDetails.push(`Paper Materials Total: ₹${paperTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
       }
 
       let plateTotal = 0;
@@ -907,7 +911,7 @@ export function PartyLedger() {
           const stock = stocks.find(s => s.id === plate.plateId);
           const isAdditional = (job.isJoint || (job.jointRef && job.jointRef.trim() !== '')) && !plate.isJoint && !plate.isJointRef;
           const label = isAdditional ? `${stock?.name || 'Plate'} (Addl.)` : (stock?.name || 'Plate');
-          plateDetails.push(`${label}: ₹${plateCost.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`);
+          plateDetails.push(`Plate: ${label}: ₹${plateCost.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`);
         }
       });
 
@@ -1361,24 +1365,42 @@ export function PartyLedger() {
               {/* Date Filter & Export Tool Bar */}
               <Card className="border-none shadow-sm bg-white rounded-[20px] p-4 md:p-5">
                 <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-                  <div className="grid grid-cols-2 gap-3 flex-1 max-w-lg">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase tracking-wider text-gray-400 font-bold font-serif">From Date</label>
-                      <Input 
-                        type="date" 
-                        value={startDate} 
-                        onChange={e => setStartDate(e.target.value)}
-                        className="rounded-xl border-gray-150 h-10 text-xs text-gray-600 bg-gray-50/30 font-sans"
-                      />
+                  <div className="flex flex-col sm:flex-row sm:items-end gap-4 flex-1 max-w-2xl">
+                    <div className="grid grid-cols-2 gap-3 flex-1">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] uppercase tracking-wider text-gray-400 font-bold font-serif">From Date</label>
+                        <Input 
+                          type="date" 
+                          value={startDate} 
+                          onChange={e => setStartDate(e.target.value)}
+                          className="rounded-xl border-gray-150 h-10 text-xs text-gray-600 bg-gray-50/30 font-sans"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] uppercase tracking-wider text-gray-400 font-bold font-serif">To Date</label>
+                        <Input 
+                          type="date" 
+                          value={endDate} 
+                          onChange={e => setEndDate(e.target.value)}
+                          className="rounded-xl border-gray-150 h-10 text-xs text-gray-600 bg-gray-50/30 font-sans"
+                        />
+                      </div>
                     </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase tracking-wider text-gray-400 font-bold font-serif">To Date</label>
-                      <Input 
-                        type="date" 
-                        value={endDate} 
-                        onChange={e => setEndDate(e.target.value)}
-                        className="rounded-xl border-gray-150 h-10 text-xs text-gray-600 bg-gray-50/30 font-sans"
+                    {/* Toggle option for details */}
+                    <div className="flex items-center gap-2 pb-1.5 select-none shrink-0">
+                      <input
+                        type="checkbox"
+                        id="toggle-detailed-ledger"
+                        checked={showDetailedLedger}
+                        onChange={(e) => {
+                          setShowDetailedLedger(e.target.checked);
+                          localStorage.setItem('pdf_show_detailed_ledger', e.target.checked ? 'true' : 'false');
+                        }}
+                        className="rounded border-gray-300 text-[#5A5A40] focus:ring-[#5A5A40] h-4 w-4 cursor-pointer accent-[#5A5A40]"
                       />
+                      <label htmlFor="toggle-detailed-ledger" className="text-xs text-gray-600 font-medium cursor-pointer font-sans">
+                        Show Job Details
+                      </label>
                     </div>
                   </div>
                   
@@ -1488,7 +1510,7 @@ export function PartyLedger() {
                             <TableCell className="py-3 md:py-4">
                               <div className="flex flex-col">
                                 <span className="text-gray-800 font-semibold text-xs md:text-sm">{tr.title}</span>
-                                {tr.details && tr.details.length > 0 && (
+                                {showDetailedLedger && tr.details && tr.details.length > 0 && (
                                   <div className="flex flex-wrap gap-1 mt-1.5 max-w-xl">
                                     {tr.details.map((detail, idx) => (
                                       <span key={idx} className="inline-flex items-center text-[10px] text-gray-500 bg-gray-50 border border-gray-200/50 rounded-md px-2 py-0.5 font-sans leading-tight">
@@ -1581,7 +1603,7 @@ export function PartyLedger() {
                               </span>
                             </div>
                             <h4 className="text-sm font-semibold text-gray-800 mt-1.5 break-words leading-snug">{tr.title}</h4>
-                            {tr.details && tr.details.length > 0 && (
+                            {showDetailedLedger && tr.details && tr.details.length > 0 && (
                               <div className="flex flex-wrap gap-1 mt-1.5">
                                 {tr.details.map((detail, idx) => (
                                   <span key={idx} className="inline-flex items-center text-[9px] text-gray-500 bg-gray-50 border border-gray-200/50 rounded-md px-1.5 py-0.5 font-sans leading-tight">
