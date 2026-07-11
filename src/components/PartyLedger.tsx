@@ -354,7 +354,7 @@ export function PartyLedger() {
       const dateStr = format(new Date(t.date), 'dd-MM-yy');
       const typeStr = t.type === 'debit' ? 'JOB BILL' : 'RECEIPT';
       const titleEscaped = t.title.replace(/"/g, '""');
-      const detailsJoin = showDetailedLedger ? (t.details || []).join(' | ').replace(/"/g, '""') : '';
+      const detailsJoin = (showDetailedLedger || t.type === 'credit') ? (t.details || []).join(' | ').replace(/"/g, '""') : '';
       const fullTitle = detailsJoin ? `${titleEscaped} (${detailsJoin})` : titleEscaped;
       const debitStr = t.type === 'debit' ? t.amount.toFixed(2) : '-';
       const creditStr = t.type === 'credit' ? t.amount.toFixed(2) : '-';
@@ -410,7 +410,7 @@ export function PartyLedger() {
         </td>
         <td style="padding: 7px 12px; font-size: 11.5px; color: #1a202c;">
           <div style="font-weight: 600; color: #2d3748;">${tr.title}</div>
-          ${showDetailedLedger && tr.details && tr.details.length > 0 ? `
+          ${(showDetailedLedger || tr.type === 'credit') && tr.details && tr.details.length > 0 ? `
             <div style="font-size: 9.5px; color: #718096; margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px;">
               ${tr.details.map(d => `<span style="background-color: #f7fafc; border: 1px solid #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 8.5px; font-family: sans-serif; white-space: normal;">${d}</span>`).join('')}
             </div>
@@ -869,16 +869,7 @@ export function PartyLedger() {
       }
 
       const paperDetails: string[] = [];
-      job.items.forEach(item => {
-        const sheetsUsed = item.allocatedPaper !== undefined ? item.allocatedPaper : (item.quantityUsed || 0);
-        if (sheetsUsed > 0) {
-          const stock = stocks.find(s => s.id === item.stockId);
-          if (stock?.name) {
-            paperDetails.push(`Paper: ${stock.name}`);
-          }
-        }
-      });
-
+      // Don't show paper stock names in ledger details as per user request
       if (paperTotal > 0) {
         paperDetails.push(`Paper Billing: ₹${paperTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
       }
@@ -1510,7 +1501,7 @@ export function PartyLedger() {
                             <TableCell className="py-3 md:py-4">
                               <div className="flex flex-col">
                                 <span className="text-gray-800 font-semibold text-xs md:text-sm">{tr.title}</span>
-                                {showDetailedLedger && tr.details && tr.details.length > 0 && (
+                                {(showDetailedLedger || tr.type === 'credit') && tr.details && tr.details.length > 0 && (
                                   <div className="flex flex-wrap gap-1 mt-1.5 max-w-xl">
                                     {tr.details.map((detail, idx) => (
                                       <span key={idx} className="inline-flex items-center text-[10px] text-gray-500 bg-gray-50 border border-gray-200/50 rounded-md px-2 py-0.5 font-sans leading-tight">
@@ -1603,7 +1594,7 @@ export function PartyLedger() {
                               </span>
                             </div>
                             <h4 className="text-sm font-semibold text-gray-800 mt-1.5 break-words leading-snug">{tr.title}</h4>
-                            {showDetailedLedger && tr.details && tr.details.length > 0 && (
+                            {(showDetailedLedger || tr.type === 'credit') && tr.details && tr.details.length > 0 && (
                               <div className="flex flex-wrap gap-1 mt-1.5">
                                 {tr.details.map((detail, idx) => (
                                   <span key={idx} className="inline-flex items-center text-[9px] text-gray-500 bg-gray-50 border border-gray-200/50 rounded-md px-1.5 py-0.5 font-sans leading-tight">
