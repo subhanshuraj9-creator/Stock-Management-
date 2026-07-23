@@ -2627,16 +2627,6 @@ export function JobManagement() {
             <span>{isImporting ? 'Importing...' : 'Restore'}</span>
           </Button>
 
-          <Button
-            variant="outline"
-            className="border-gray-200 text-gray-650 hover:bg-gray-50 hover:text-gray-900 rounded-full h-12 md:h-10 px-4 flex items-center justify-center gap-2 w-full sm:w-auto shrink-0 transition-all font-sans font-medium text-xs md:text-sm"
-            onClick={handleSyncCloudData}
-            disabled={isSyncingData}
-            title="Force pull data directly from active Cloud database"
-          >
-            <RefreshCw size={14} className={isSyncingData ? 'animate-spin' : ''} />
-            <span>{isSyncingData ? 'Syncing...' : 'Force Sync'}</span>
-          </Button>
 
           <input 
             type="file" 
