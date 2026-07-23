@@ -521,8 +521,6 @@ export function JobManagement() {
   const [jobToDelete, setJobToDelete] = useState<Job | null>(null);
   const [invoiceJob, setInvoiceJob] = useState<Job | null>(null);
   const [previewJob, setPreviewJob] = useState<Job | null>(null);
-  const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
-  const [isClearing, setIsClearing] = useState(false);
   const [isDownloadingBackup, setIsDownloadingBackup] = useState(false);
   const [isSyncingData, setIsSyncingData] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
@@ -552,24 +550,6 @@ export function JobManagement() {
     receiverName: '',
     notes: ''
   });
-
-  const handleClearJobs = async () => {
-    setIsClearing(true);
-    try {
-      const batch = writeBatch(db);
-      jobs.forEach(job => {
-        batch.delete(doc(db, 'jobs', job.id));
-      });
-      await batch.commit();
-      toast.success('All job orders removed from history');
-      setIsClearConfirmOpen(false);
-    } catch (error) {
-      console.error(error);
-      toast.error('Failed to clear jobs history');
-    } finally {
-      setIsClearing(false);
-    }
-  };
 
   const handleDownloadBackup = async () => {
     try {
@@ -2666,16 +2646,7 @@ export function JobManagement() {
             className="hidden" 
           />
 
-          {jobs.length > 0 && (
-            <Button
-              variant="outline"
-              className="border-red-200 text-red-650 hover:bg-red-50 rounded-full h-12 md:h-10 px-4 flex items-center justify-center gap-2 w-full sm:w-auto shrink-0 transition-all font-sans font-medium text-xs md:text-sm"
-              onClick={() => setIsClearConfirmOpen(true)}
-            >
-              <Trash2 size={15} />
-              <span>Clear Jobs</span>
-            </Button>
-          )}
+
           <Dialog open={isAddOpen} disablePointerDismissal={true} onOpenChange={(open) => {
           setIsAddOpen(open);
           if (open) {
@@ -5241,27 +5212,6 @@ export function JobManagement() {
                 setSelectedJobForDispatch(null);
               }} className="rounded-full w-full">
                 Close Dispatch Board
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
-
-      {isClearConfirmOpen && (
-        <Dialog open={isClearConfirmOpen} onOpenChange={setIsClearConfirmOpen}>
-          <DialogContent className="sm:max-w-[425px] rounded-[32px]">
-            <DialogHeader>
-              <DialogTitle className="font-serif text-2xl">Clear Jobs History</DialogTitle>
-            </DialogHeader>
-            <div className="py-6">
-              <p className="text-gray-600">
-                Are you sure you want to permanently clear the jobs history? This will delete <span className="font-bold text-gray-900">all job orders</span> from the system. Stock values are unaffected. This action is irreversible.
-              </p>
-            </div>
-            <DialogFooter className="gap-2 sm:gap-0">
-              <Button variant="ghost" onClick={() => setIsClearConfirmOpen(false)} className="rounded-full" disabled={isClearing}>Cancel</Button>
-              <Button variant="destructive" onClick={handleClearJobs} className="rounded-full px-8 font-serif" disabled={isClearing}>
-                {isClearing ? 'Clearing...' : 'Clear Jobs History'}
               </Button>
             </DialogFooter>
           </DialogContent>
