@@ -238,6 +238,7 @@ export function PartyLedger() {
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [isClearing, setIsClearing] = useState(false);
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
@@ -1658,19 +1659,45 @@ export function PartyLedger() {
       </div>
 
       {isClearConfirmOpen && (
-        <Dialog open={isClearConfirmOpen} onOpenChange={setIsClearConfirmOpen}>
+        <Dialog open={isClearConfirmOpen} onOpenChange={(open) => {
+          setIsClearConfirmOpen(open);
+          if (!open) setDeleteConfirmText('');
+        }}>
           <DialogContent className="sm:max-w-[425px] rounded-[32px]">
             <DialogHeader>
               <DialogTitle className="font-serif text-2xl">Clear Payments History</DialogTitle>
             </DialogHeader>
-            <div className="py-6">
-              <p className="text-gray-600">
+            <div className="py-4 space-y-4">
+              <p className="text-gray-600 text-sm">
                 Are you sure you want to permanently clear all recorded payment receipts? This will delete <span className="font-bold text-gray-900">all credits and payments</span> from all ledger books. This action is irreversible.
               </p>
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-red-600 uppercase tracking-wider block">
+                  To confirm, type "DELETE ALL PAYMENTS" below:
+                </label>
+                <Input
+                  className="rounded-xl border-gray-200"
+                  placeholder="DELETE ALL PAYMENTS"
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  disabled={isClearing}
+                />
+              </div>
             </div>
             <DialogFooter className="gap-2 sm:gap-0">
-              <Button variant="ghost" onClick={() => setIsClearConfirmOpen(false)} className="rounded-full" disabled={isClearing}>Cancel</Button>
-              <Button variant="destructive" onClick={handleClearPayments} className="rounded-full px-8 font-serif" disabled={isClearing}>
+              <Button variant="ghost" onClick={() => {
+                setIsClearConfirmOpen(false);
+                setDeleteConfirmText('');
+              }} className="rounded-full" disabled={isClearing}>Cancel</Button>
+              <Button 
+                variant="destructive" 
+                onClick={() => {
+                  handleClearPayments();
+                  setDeleteConfirmText('');
+                }} 
+                className="rounded-full px-8 font-serif" 
+                disabled={isClearing || deleteConfirmText !== 'DELETE ALL PAYMENTS'}
+              >
                 {isClearing ? 'Clearing...' : 'Clear Payment History'}
               </Button>
             </DialogFooter>

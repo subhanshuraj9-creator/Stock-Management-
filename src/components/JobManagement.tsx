@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { db, handleFirestoreError, OperationType, cleanUndefined, auth } from '../firebase';
-import { collection, onSnapshot, addDoc, query, orderBy, runTransaction, doc, writeBatch, getDocs, where, getDocsFromServer } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, query, orderBy, runTransaction, doc, writeBatch, getDocs, where, getDocsFromServer, disableNetwork, enableNetwork } from 'firebase/firestore';
 import { Job, StockItem, JobItem, JointRun, JointRunAuditLog } from '../types';
 import { useFirebaseData } from '../contexts/FirebaseDataContext';
 import { getJobCode } from '../lib/utils';
@@ -688,17 +688,59 @@ export function JobManagement() {
   const handleSyncCloudData = async () => {
     try {
       setIsSyncingData(true);
-      toast.loading("Pulling and synchronizing latest data from live Cloud server...", { id: "sync-toast" });
+      toast.loading("Re-establishing connection and pulling data from Cloud...", { id: "sync-toast" });
 
-      const collections = ['jobs', 'stocks', 'jointRuns', 'payments', 'stockHistory', 'jointRunAuditLogs'];
-      for (const colName of collections) {
-        await getDocsFromServer(query(collection(db, colName)));
+      // Force network connection cycle to clear any stale/offline WebSocket/polling states
+      await disableNetwork(db);
+      await enableNetwork(db);
+
+      const collections = [
+        { name: 'jobs', label: 'Jobs' },
+        { name: 'stocks', label: 'Stocks' },
+        { name: 'payments', label: 'Payments' },
+        { name: 'jointRuns', label: 'Joint Runs' },
+        { name: 'stockHistory', label: 'Stock History' },
+        { name: 'expenses', label: 'Expenses' },
+        { name: 'partyOpeningBalances', label: 'Opening Balances' }
+      ];
+
+      const counts: Record<string, number> = {};
+      let reachedServer = true;
+      for (const col of collections) {
+        let snap;
+        try {
+          snap = await getDocsFromServer(query(collection(db, col.name)));
+        } catch (serverErr) {
+          console.warn(`Could not fetch ${col.name} from server. Reading from offline cache.`, serverErr);
+          reachedServer = false;
+          snap = await getDocs(query(collection(db, col.name)));
+        }
+        counts[col.label] = snap.size;
       }
 
-      toast.success("Database fully pulled and client state synchronized!", { id: "sync-toast" });
+      const summary = collections
+        .map(col => `${counts[col.label]} ${col.label}`)
+        .join(', ');
+
+      if (reachedServer) {
+        toast.success(`Sync complete! Pulled: ${summary}.`, { 
+          id: "sync-toast",
+          duration: 8000
+        });
+      } else {
+        toast.success(`Sync complete (using local offline cache)! Loaded: ${summary}.`, { 
+          id: "sync-toast",
+          duration: 8000
+        });
+      }
     } catch (err: any) {
       console.error("Force sync failed", err);
-      toast.error("Synchronized with active local cache. Cloud sync will continue in background.", { id: "sync-toast" });
+      const errMsg = err?.message || String(err);
+      if (errMsg.includes("Could not reach") || errMsg.includes("offline") || errMsg.includes("Failed to get document")) {
+        toast.error("Could not reach live Cloud database. Please check your internet connection or verify if Firestore daily free limits are exhausted.", { id: "sync-toast", duration: 8000 });
+      } else {
+        toast.error(`Sync error: ${errMsg}. Synchronized with local offline cache.`, { id: "sync-toast", duration: 8000 });
+      }
     } finally {
       setIsSyncingData(false);
     }
@@ -2583,14 +2625,55 @@ export function JobManagement() {
           <p className="text-sm md:text-base text-gray-500 font-serif italic">Track and manage client orders</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+          <Button
+            variant="outline"
+            className="border-gray-200 text-gray-650 hover:bg-gray-50 hover:text-gray-900 rounded-full h-12 md:h-10 px-4 flex items-center justify-center gap-2 w-full sm:w-auto shrink-0 transition-all font-sans font-medium text-xs md:text-sm"
+            onClick={handleDownloadBackup}
+            disabled={isDownloadingBackup}
+            title="Download JSON backup of all database collections"
+          >
+            <Download size={15} className={isDownloadingBackup ? 'animate-bounce' : ''} />
+            <span>{isDownloadingBackup ? 'Exporting...' : 'Backup'}</span>
+          </Button>
+
+          <Button
+            variant="outline"
+            className="border-gray-200 text-gray-650 hover:bg-gray-50 hover:text-gray-900 rounded-full h-12 md:h-10 px-4 flex items-center justify-center gap-2 w-full sm:w-auto shrink-0 transition-all font-sans font-medium text-xs md:text-sm"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isImporting}
+            title="Upload and restore a previously exported JSON backup"
+          >
+            <Upload size={15} className={isImporting ? 'animate-pulse' : ''} />
+            <span>{isImporting ? 'Importing...' : 'Restore'}</span>
+          </Button>
+
+          <Button
+            variant="outline"
+            className="border-gray-200 text-gray-650 hover:bg-gray-50 hover:text-gray-900 rounded-full h-12 md:h-10 px-4 flex items-center justify-center gap-2 w-full sm:w-auto shrink-0 transition-all font-sans font-medium text-xs md:text-sm"
+            onClick={handleSyncCloudData}
+            disabled={isSyncingData}
+            title="Force pull data directly from active Cloud database"
+          >
+            <RefreshCw size={14} className={isSyncingData ? 'animate-spin' : ''} />
+            <span>{isSyncingData ? 'Syncing...' : 'Force Sync'}</span>
+          </Button>
+
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleImportBackup} 
+            accept=".json" 
+            className="hidden" 
+          />
+
           {jobs.length > 0 && (
             <Button
               variant="outline"
-              className="border-red-200 text-red-600 hover:bg-red-50 rounded-full h-12 md:h-10 px-4 flex items-center justify-center gap-2 w-full sm:w-auto shrink-0"
+              className="border-red-200 text-red-650 hover:bg-red-50 rounded-full h-12 md:h-10 px-4 flex items-center justify-center gap-2 w-full sm:w-auto shrink-0 transition-all font-sans font-medium text-xs md:text-sm"
               onClick={() => setIsClearConfirmOpen(true)}
             >
-              <Trash2 size={16} />
-              <span>Clear Jobs History</span>
+              <Trash2 size={15} />
+              <span>Clear Jobs</span>
             </Button>
           )}
           <Dialog open={isAddOpen} disablePointerDismissal={true} onOpenChange={(open) => {
